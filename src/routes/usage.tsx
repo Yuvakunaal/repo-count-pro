@@ -1,7 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useCallback, useEffect, useState } from "react";
 import { formatDistanceToNowStrict } from "date-fns";
-import { ArrowLeft, Loader2, AlertTriangle, RefreshCw, Gauge } from "lucide-react";
+import { ArrowLeft, Loader2, AlertTriangle, RefreshCw } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { useGitHubAuth } from "@/lib/auth-store";
@@ -86,12 +86,7 @@ function UsageContent({ token }: { token: string }) {
   return (
     <div className="space-y-6">
       <section>
-        <div className="flex items-center gap-2">
-          <div className="h-7 w-7 rounded-md bg-foreground/5 border border-border grid place-items-center">
-            <Gauge className="h-3.5 w-3.5 text-foreground" />
-          </div>
-          <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight">API usage</h1>
-        </div>
+        <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight">API usage</h1>
         <p className="mt-2 text-sm text-muted-foreground">
           Your GitHub token's REST API rate limit, straight from GitHub. Checking this doesn't use
           up any of your requests.
