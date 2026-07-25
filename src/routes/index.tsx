@@ -129,25 +129,38 @@ function useLongPress(onLongPress: () => void, ms = 500) {
   return { onTouchStart: start, onTouchEnd: end, onTouchMove: cancel, onTouchCancel: cancel };
 }
 
-function HeaderIconTooltip({ label, children }: { label: string; children: React.ReactElement }) {
+function HeaderIconTooltip({
+  label,
+  children,
+  hoverTooltip = true,
+}: {
+  label: string;
+  children: React.ReactElement;
+  /** Desktop hover tooltip — off keeps the mobile long-press peek only. */
+  hoverTooltip?: boolean;
+}) {
   const [peek, setPeek] = useState(false);
   const longPress = useLongPress(() => {
     setPeek(true);
     window.setTimeout(() => setPeek(false), 1500);
   });
 
+  const trigger = (
+    <span className="relative inline-flex" {...longPress}>
+      {children}
+      {peek ? (
+        <span className="absolute -bottom-8 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-md bg-primary px-2.5 py-1 text-[11px] text-primary-foreground shadow-md z-20 sm:hidden">
+          {label}
+        </span>
+      ) : null}
+    </span>
+  );
+
+  if (!hoverTooltip) return trigger;
+
   return (
     <Tooltip>
-      <TooltipTrigger asChild>
-        <span className="relative inline-flex" {...longPress}>
-          {children}
-          {peek ? (
-            <span className="absolute -bottom-8 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-md bg-primary px-2.5 py-1 text-[11px] text-primary-foreground shadow-md z-20 sm:hidden">
-              {label}
-            </span>
-          ) : null}
-        </span>
-      </TooltipTrigger>
+      <TooltipTrigger asChild>{trigger}</TooltipTrigger>
       <TooltipContent>{label}</TooltipContent>
     </Tooltip>
   );
@@ -180,7 +193,7 @@ function Header({
         {user ? (
           <TooltipProvider delayDuration={300}>
             <div className="flex items-center gap-3">
-              <HeaderIconTooltip label={user.login}>
+              <HeaderIconTooltip label={user.login} hoverTooltip={false}>
                 <div className="flex items-center gap-2">
                   <img
                     src={user.avatar_url}
@@ -196,6 +209,7 @@ function Header({
               <HeaderIconTooltip label="Usage">
                 <Link
                   to="/usage"
+                  aria-label="Usage"
                   className="h-8 w-8 grid place-items-center rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
                 >
                   <Gauge className="h-4 w-4" />
@@ -203,7 +217,7 @@ function Header({
               </HeaderIconTooltip>
 
               <AlertDialog>
-                <HeaderIconTooltip label="Log out">
+                <HeaderIconTooltip label="Log out" hoverTooltip={false}>
                   <AlertDialogTrigger asChild>
                     <Button
                       variant="ghost"
@@ -211,7 +225,7 @@ function Header({
                       className="h-8 px-2 sm:px-3 text-xs text-muted-foreground hover:text-foreground"
                     >
                       <LogOut className="h-3.5 w-3.5 sm:mr-1.5" />
-                      <span className="hidden sm:inline">Log out</span>
+                      <span className="sr-only sm:not-sr-only">Log out</span>
                     </Button>
                   </AlertDialogTrigger>
                 </HeaderIconTooltip>
