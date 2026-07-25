@@ -18,6 +18,7 @@ import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { useGitHubAuth } from "@/lib/auth-store";
+import { useCachedAnalysisState, type AnalysisResult } from "@/lib/analysis-cache";
 import {
   parseRepoInput,
   fetchRepoMeta,
@@ -28,9 +29,7 @@ import {
   formatNumber,
   formatPct,
   GitHubError,
-  type CountResult,
   type ExtensionRow,
-  type GitTreeEntry,
 } from "@/lib/github-logic";
 
 export const Route = createFileRoute("/")({
@@ -55,15 +54,6 @@ const STEP_LABEL: Record<Exclude<Step, "idle" | "done">, string> = {
   counting: "Counting files…",
   preparing: "Preparing output…",
 };
-
-interface AnalysisResult {
-  fullName: string;
-  htmlUrl: string;
-  branch: string;
-  sha: string;
-  truncated: boolean;
-  counts: CountResult;
-}
 
 function Index() {
   const auth = useGitHubAuth();
@@ -280,13 +270,23 @@ function SignInPanel({
 /* ---------- Analyzer ---------- */
 
 function Analyzer({ token }: { token: string }) {
-  const [input, setInput] = useState("");
-  const [includeDotfiles, setIncludeDotfiles] = useState(false);
-  const [configAsCode, setConfigAsCode] = useState(true);
-  const [step, setStep] = useState<Step>("idle");
+  // Backed by a module-level cache (not localStorage) so the current
+  // analysis survives a trip to /usage and back, but resets on a hard
+  // reload or an explicit new analysis / "Analyze another repository".
+  const {
+    input,
+    setInput,
+    rawTree,
+    setRawTree,
+    result,
+    setResult,
+    includeDotfiles,
+    setIncludeDotfiles,
+    configAsCode,
+    setConfigAsCode,
+  } = useCachedAnalysisState();
+  const [step, setStep] = useState<Step>(() => (result ? "done" : "idle"));
   const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<AnalysisResult | null>(null);
-  const [rawTree, setRawTree] = useState<GitTreeEntry[] | null>(null);
 
   const canSubmit = useMemo(
     () => !!input.trim() && step === "idle",
@@ -345,7 +345,7 @@ function Analyzer({ token }: { token: string }) {
         setStep("idle");
       }
     },
-    [input, includeDotfiles, configAsCode, token],
+    [input, includeDotfiles, configAsCode, token, setError, setResult, setRawTree, setStep],
   );
 
   // The full tree is already cached from the initial fetch, so filtering after
@@ -358,7 +358,7 @@ function Analyzer({ token }: { token: string }) {
       const counts = countFiles(rawTree, { includeDotfiles: nextDot, configAsCode: nextCfg });
       setResult((prev) => (prev ? { ...prev, counts } : prev));
     },
-    [rawTree],
+    [rawTree, setIncludeDotfiles, setConfigAsCode, setResult],
   );
 
   const reset = () => {
