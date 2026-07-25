@@ -1,11 +1,19 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import { formatDistanceToNowStrict } from "date-fns";
 import { ArrowLeft, Loader2, AlertTriangle, RefreshCw } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { useGitHubAuth } from "@/lib/auth-store";
-import { fetchRateLimit, formatNumber, GitHubError, type RateLimitInfo } from "@/lib/github-logic";
+import {
+  fetchUser,
+  fetchRateLimit,
+  formatNumber,
+  getLastSeenRateLimit,
+  GitHubError,
+  type RateLimitInfo,
+  type RateLimitHeaderSnapshot,
+} from "@/lib/github-logic";
 
 export const Route = createFileRoute("/usage")({
   component: UsagePage,
@@ -45,7 +53,7 @@ function UsagePage() {
 
 function TopBar() {
   return (
-    <header className="border-b border-border/70">
+    <header className="sticky top-0 z-10 bg-background border-b border-border/70">
       <div className="max-w-xl mx-auto px-5 sm:px-8 h-14 flex items-center">
         <Link
           to="/"
@@ -59,37 +67,40 @@ function TopBar() {
 }
 
 function UsageContent({ token }: { token: string }) {
-  const [data, setData] = useState<RateLimitInfo | null>(null);
+  const [snapshot, setSnapshot] = useState<RateLimitHeaderSnapshot | null>(() =>
+    getLastSeenRateLimit(),
+  );
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
 
-  const load = useCallback(async () => {
+  // GitHub's dedicated /rate_limit endpoint can lag behind real activity by
+  // several minutes (confirmed: a real request reported used=12 in its own
+  // headers while /rate_limit said 0 seconds later). So "refresh" here hits a
+  // cheap real endpoint instead and reads the fresh headers off that response.
+  const refresh = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const info = await fetchRateLimit(token);
-      setData(info);
+      await fetchUser(token);
+      setSnapshot(getLastSeenRateLimit());
     } catch (err) {
-      setError(err instanceof GitHubError ? err.message : "Failed to load usage.");
+      setError(err instanceof GitHubError ? err.message : "Failed to refresh usage.");
     } finally {
       setLoading(false);
     }
   }, [token]);
 
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  const usedPct = data ? Math.min(100, (data.used / data.limit) * 100) : 0;
-  const resetDate = data ? new Date(data.reset * 1000) : null;
+  const usedPct = snapshot ? Math.min(100, (snapshot.used / snapshot.limit) * 100) : 0;
+  const resetDate = snapshot ? new Date(snapshot.reset * 1000) : null;
 
   return (
     <div className="space-y-6">
       <section>
         <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight">API usage</h1>
         <p className="mt-2 text-sm text-muted-foreground">
-          Your GitHub token's REST API rate limit, straight from GitHub. Checking this doesn't use
-          up any of your requests.
+          Read straight from the headers on your last real GitHub API request — the reliable source.
+          GitHub's separate usage-check endpoint can lag behind real activity, so the numbers below
+          don't rely on it.
         </p>
       </section>
 
@@ -97,28 +108,39 @@ function UsageContent({ token }: { token: string }) {
         <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-4 flex items-start gap-3">
           <AlertTriangle className="h-4 w-4 text-destructive mt-0.5 shrink-0" />
           <div>
-            <div className="text-sm font-medium text-destructive">Couldn't load usage</div>
+            <div className="text-sm font-medium text-destructive">Couldn't refresh</div>
             <p className="text-xs text-destructive/90 mt-1 leading-relaxed">{error}</p>
           </div>
         </div>
       ) : null}
 
-      {data && data.limit <= 60 ? (
+      {snapshot && snapshot.limit <= 60 ? (
         <div className="rounded-lg border border-[color:var(--color-terminal-amber)]/40 bg-[color:var(--color-terminal-amber)]/10 px-4 py-3 text-xs font-mono text-[color:var(--color-terminal-amber)] flex items-start gap-2">
           <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
           <span>
-            A limit of {formatNumber(data.limit)}/hour is GitHub's rate for unauthenticated
-            requests, not the 5,000/hour a signed-in token gets. This check likely isn't carrying
-            your token — see the raw response below.
+            A limit of {formatNumber(snapshot.limit)}/hour is GitHub's rate for unauthenticated
+            requests, not the 5,000/hour a signed-in token gets — this request likely wasn't
+            carrying your token.
           </span>
         </div>
       ) : null}
 
-      {loading && !data ? (
-        <div className="rounded-lg border border-border bg-card p-6 grid place-items-center py-16">
-          <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+      {!snapshot ? (
+        <div className="rounded-lg border border-border bg-card p-6 sm:p-8 text-center space-y-4">
+          <p className="text-sm text-muted-foreground">
+            No request recorded yet in this browser. Analyze a repository, or check now — this uses
+            1 request.
+          </p>
+          <Button onClick={() => void refresh()} disabled={loading} className="h-9">
+            {loading ? (
+              <Loader2 className="h-4 w-4 animate-spin mr-1.5" />
+            ) : (
+              <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
+            )}
+            Check now
+          </Button>
         </div>
-      ) : data ? (
+      ) : (
         <div className="rounded-lg border border-border bg-card overflow-hidden">
           <div className="border-b border-border px-5 py-3 flex items-center justify-between">
             <div className="flex items-center gap-2">
@@ -128,8 +150,9 @@ function UsageContent({ token }: { token: string }) {
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => void load()}
+              onClick={() => void refresh()}
               disabled={loading}
+              title="Uses 1 request to get a fresh reading"
               className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
             >
               <RefreshCw className={"h-3.5 w-3.5 mr-1.5" + (loading ? " animate-spin" : "")} />
@@ -139,9 +162,13 @@ function UsageContent({ token }: { token: string }) {
 
           <div className="p-5 sm:p-6 space-y-6">
             <div className="grid grid-cols-3 gap-x-4 gap-y-5">
-              <StatItem label="Used so far" value={formatNumber(data.used)} accent="amber" />
-              <StatItem label="Left to use" value={formatNumber(data.remaining)} accent="green" />
-              <StatItem label="Total per hour" value={formatNumber(data.limit)} />
+              <StatItem label="Used so far" value={formatNumber(snapshot.used)} accent="amber" />
+              <StatItem
+                label="Left to use"
+                value={formatNumber(snapshot.remaining)}
+                accent="green"
+              />
+              <StatItem label="Total per hour" value={formatNumber(snapshot.limit)} />
             </div>
 
             <div>
@@ -153,7 +180,7 @@ function UsageContent({ token }: { token: string }) {
               </div>
               <div className="mt-2 flex items-center justify-between text-[11px] font-mono text-muted-foreground">
                 <span>
-                  {formatNumber(data.used)} of {formatNumber(data.limit)} used
+                  {formatNumber(snapshot.used)} of {formatNumber(snapshot.limit)} used
                 </span>
                 {resetDate ? (
                   <span title={resetDate.toLocaleString()}>
@@ -163,18 +190,65 @@ function UsageContent({ token }: { token: string }) {
               </div>
             </div>
 
-            <details className="group">
-              <summary className="cursor-pointer text-[11px] font-mono text-muted-foreground hover:text-foreground select-none">
-                Raw response from GitHub
-              </summary>
-              <pre className="mt-2 rounded-md border border-border bg-background p-3 text-[10.5px] font-mono text-muted-foreground overflow-x-auto whitespace-pre-wrap break-all">
-                {JSON.stringify(data.raw, null, 2)}
-              </pre>
-            </details>
+            <p className="text-[11px] font-mono text-muted-foreground break-all">
+              from GET {snapshot.url.replace("https://api.github.com", "")} ·{" "}
+              {formatDistanceToNowStrict(new Date(snapshot.seenAt))} ago
+            </p>
           </div>
         </div>
-      ) : null}
+      )}
+
+      <DedicatedCheckPanel token={token} />
     </div>
+  );
+}
+
+function DedicatedCheckPanel({ token }: { token: string }) {
+  const [data, setData] = useState<RateLimitInfo | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const check = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      setData(await fetchRateLimit(token));
+    } catch (err) {
+      setError(err instanceof GitHubError ? err.message : "Failed to check.");
+    } finally {
+      setLoading(false);
+    }
+  }, [token]);
+
+  return (
+    <details className="group rounded-lg border border-border bg-card px-4 py-3">
+      <summary className="cursor-pointer text-[11px] font-mono text-muted-foreground hover:text-foreground select-none">
+        GitHub's dedicated usage-check endpoint (for comparison — known to lag behind real activity)
+      </summary>
+      <div className="mt-3 space-y-3">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => void check()}
+          disabled={loading}
+          className="h-8"
+        >
+          {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : null}
+          Check /rate_limit (free — doesn't use a request)
+        </Button>
+        {error ? <p className="text-xs text-destructive">{error}</p> : null}
+        {data ? (
+          <>
+            <p className="text-xs font-mono text-muted-foreground">
+              used {formatNumber(data.used)} of {formatNumber(data.limit)}
+            </p>
+            <pre className="rounded-md border border-border bg-background p-3 text-[10.5px] font-mono text-muted-foreground overflow-x-auto whitespace-pre-wrap break-all">
+              {JSON.stringify(data.raw, null, 2)}
+            </pre>
+          </>
+        ) : null}
+      </div>
+    </details>
   );
 }
 

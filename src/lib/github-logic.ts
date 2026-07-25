@@ -55,6 +55,58 @@ export class GitHubError extends Error {
   }
 }
 
+export interface RateLimitHeaderSnapshot {
+  limit: number;
+  remaining: number;
+  used: number;
+  reset: number;
+  resource: string | null;
+  status: number;
+  url: string;
+  seenAt: number;
+}
+
+const LAST_HEADERS_KEY = "rfc.last_ratelimit_headers";
+
+// Every GitHub API response — not just a dedicated /rate_limit check — carries
+// x-ratelimit-* headers reflecting the state as of that exact request. Recording
+// these lets /usage compare "what the real analyze calls reported" against a
+// standalone check, which is the most direct way to catch any discrepancy.
+function recordRateLimitHeaders(res: Response, url: string) {
+  const limit = res.headers.get("x-ratelimit-limit");
+  const remaining = res.headers.get("x-ratelimit-remaining");
+  const reset = res.headers.get("x-ratelimit-reset");
+  if (limit === null || remaining === null || reset === null) return;
+  const used = res.headers.get("x-ratelimit-used");
+  const snapshot: RateLimitHeaderSnapshot = {
+    limit: Number(limit),
+    remaining: Number(remaining),
+    used: used !== null ? Number(used) : Number(limit) - Number(remaining),
+    reset: Number(reset),
+    resource: res.headers.get("x-ratelimit-resource"),
+    status: res.status,
+    url,
+    seenAt: Date.now(),
+  };
+  if (typeof window !== "undefined") {
+    try {
+      localStorage.setItem(LAST_HEADERS_KEY, JSON.stringify(snapshot));
+    } catch {
+      /* noop */
+    }
+  }
+}
+
+export function getLastSeenRateLimit(): RateLimitHeaderSnapshot | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = localStorage.getItem(LAST_HEADERS_KEY);
+    return raw ? (JSON.parse(raw) as RateLimitHeaderSnapshot) : null;
+  } catch {
+    return null;
+  }
+}
+
 async function ghFetch<T>(url: string, token: string): Promise<T> {
   let res: Response;
   try {
@@ -62,6 +114,7 @@ async function ghFetch<T>(url: string, token: string): Promise<T> {
   } catch {
     throw new GitHubError("Network error contacting GitHub. Check your connection and try again.");
   }
+  recordRateLimitHeaders(res, url);
   if (res.status === 401) throw new GitHubError("Your GitHub token is invalid or expired. Please sign in again.", 401);
   if (res.status === 403) {
     const remaining = res.headers.get("x-ratelimit-remaining");
