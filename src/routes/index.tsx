@@ -1,24 +1,740 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { useCallback, useMemo, useState } from "react";
+import {
+  Github,
+  LogOut,
+  Terminal,
+  Loader2,
+  Copy,
+  Check,
+  RotateCcw,
+  AlertTriangle,
+  ExternalLink,
+  ArrowRight,
+} from "lucide-react";
 
-// No head() here: the home route inherits title/description/og/twitter from
-// __root.tsx, and ships no og:image so serve-time hosting can inject the
-// project's social preview (explicit og:image or latest screenshot).
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
+import { useGitHubAuth } from "@/lib/auth-store";
+import {
+  parseRepoInput,
+  fetchRepoMeta,
+  fetchBranchSha,
+  fetchRecursiveTree,
+  countFiles,
+  buildMarkdown,
+  formatNumber,
+  formatPct,
+  GitHubError,
+  type CountResult,
+  type ExtensionRow,
+} from "@/lib/github-logic";
+
 export const Route = createFileRoute("/")({
   component: Index,
 });
 
-// IMPORTANT: Replace this placeholder. See ./README.md for routing conventions.
+type Step =
+  | "idle"
+  | "metadata"
+  | "branch"
+  | "sha"
+  | "tree"
+  | "counting"
+  | "preparing"
+  | "done";
+
+const STEP_LABEL: Record<Exclude<Step, "idle" | "done">, string> = {
+  metadata: "Fetching repository metadata…",
+  branch: "Resolving default branch…",
+  sha: "Resolving commit SHA…",
+  tree: "Fetching recursive tree…",
+  counting: "Counting files…",
+  preparing: "Preparing output…",
+};
+
+interface AnalysisResult {
+  fullName: string;
+  htmlUrl: string;
+  branch: string;
+  sha: string;
+  truncated: boolean;
+  counts: CountResult;
+}
+
 function Index() {
+  const auth = useGitHubAuth();
+
+  if (auth.loading) {
+    return (
+      <div className="min-h-screen grid place-items-center bg-background">
+        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
   return (
-    <div
-      className="flex min-h-screen items-center justify-center"
-      style={{ backgroundColor: "#fcfbf8" }}
-    >
-      <img
-        data-lovable-blank-page-placeholder="REMOVE_THIS"
-        src="https://cdn.gpteng.co/blank-app-v1.svg"
-        alt="Your app will live here!"
+    <div className="min-h-screen flex flex-col bg-background text-foreground">
+      <Header user={auth.user} onSignOut={auth.signOut} />
+      <main className="flex-1 w-full max-w-5xl mx-auto px-5 sm:px-8 py-10 sm:py-16">
+        {!auth.token || !auth.user ? (
+          <SignInPanel onSignIn={auth.signIn} error={auth.error} />
+        ) : (
+          <Analyzer token={auth.token} />
+        )}
+      </main>
+      <Footer />
+    </div>
+  );
+}
+
+/* ---------- Header / Footer ---------- */
+
+function Header({
+  user,
+  onSignOut,
+}: {
+  user: { login: string; avatar_url: string } | null;
+  onSignOut: () => void;
+}) {
+  return (
+    <header className="border-b border-border/70">
+      <div className="max-w-5xl mx-auto px-5 sm:px-8 h-14 flex items-center justify-between">
+        <div className="flex items-center gap-2.5">
+          <div className="h-7 w-7 rounded-md bg-foreground/5 border border-border grid place-items-center">
+            <Terminal className="h-3.5 w-3.5 text-foreground" />
+          </div>
+          <div className="flex flex-col leading-tight">
+            <span className="text-[13px] font-semibold tracking-tight">Repository File Count</span>
+            <span className="text-[10.5px] text-muted-foreground font-mono">
+              github → tree → count
+            </span>
+          </div>
+        </div>
+
+        {user ? (
+          <div className="flex items-center gap-3">
+            <div className="hidden sm:flex items-center gap-2">
+              <img
+                src={user.avatar_url}
+                alt={user.login}
+                className="h-6 w-6 rounded-full border border-border"
+              />
+              <span className="text-xs font-mono text-muted-foreground">{user.login}</span>
+            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={onSignOut}
+              className="h-8 text-xs text-muted-foreground hover:text-foreground"
+            >
+              <LogOut className="h-3.5 w-3.5 mr-1.5" /> Log out
+            </Button>
+          </div>
+        ) : null}
+      </div>
+    </header>
+  );
+}
+
+function Footer() {
+  return (
+    <footer className="border-t border-border/70">
+      <div className="max-w-5xl mx-auto px-5 sm:px-8 h-12 flex items-center justify-between text-[11px] text-muted-foreground font-mono">
+        <span>Runs entirely in your browser. Your token never leaves this device.</span>
+        <a
+          href="https://docs.github.com/rest"
+          target="_blank"
+          rel="noreferrer noopener"
+          className="hover:text-foreground inline-flex items-center gap-1"
+        >
+          GitHub REST <ExternalLink className="h-3 w-3" />
+        </a>
+      </div>
+    </footer>
+  );
+}
+
+/* ---------- Sign in ---------- */
+
+function SignInPanel({
+  onSignIn,
+  error,
+}: {
+  onSignIn: (token: string) => Promise<void>;
+  error: string | null;
+}) {
+  const [token, setToken] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!token.trim()) return;
+    setSubmitting(true);
+    try {
+      await onSignIn(token);
+    } catch {
+      /* handled in store */
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="max-w-md mx-auto">
+      <div className="mb-8">
+        <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight">Sign in with GitHub</h1>
+        <p className="mt-2 text-sm text-muted-foreground leading-relaxed">
+          Authenticate with a personal access token to analyze any public repository. Everything
+          runs client-side.
+        </p>
+      </div>
+
+      <form
+        onSubmit={submit}
+        className="rounded-lg border border-border bg-card p-5 sm:p-6 space-y-4"
+      >
+        <div className="space-y-2">
+          <Label htmlFor="token" className="text-xs font-medium">
+            GitHub token
+          </Label>
+          <Input
+            id="token"
+            type="password"
+            autoComplete="off"
+            spellCheck={false}
+            value={token}
+            onChange={(e) => setToken(e.target.value)}
+            placeholder="ghp_… or github_pat_…"
+            className="font-mono text-sm h-10"
+          />
+          <p className="text-[11px] text-muted-foreground leading-relaxed">
+            Create one at{" "}
+            <a
+              href="https://github.com/settings/tokens?type=beta"
+              target="_blank"
+              rel="noreferrer noopener"
+              className="underline underline-offset-2 hover:text-foreground"
+            >
+              github.com/settings/tokens
+            </a>{" "}
+            with <span className="font-mono">public_repo</span> read access. Stored only in this
+            browser.
+          </p>
+        </div>
+
+        {error ? (
+          <div className="text-xs text-destructive flex items-start gap-2 border border-destructive/40 bg-destructive/10 rounded-md px-3 py-2">
+            <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+            <span>{error}</span>
+          </div>
+        ) : null}
+
+        <Button type="submit" disabled={submitting || !token.trim()} className="w-full h-10">
+          {submitting ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <>
+              <Github className="h-4 w-4 mr-2" /> Continue
+            </>
+          )}
+        </Button>
+      </form>
+    </div>
+  );
+}
+
+/* ---------- Analyzer ---------- */
+
+function Analyzer({ token }: { token: string }) {
+  const [input, setInput] = useState("");
+  const [includeDotfiles, setIncludeDotfiles] = useState(false);
+  const [configAsCode, setConfigAsCode] = useState(true);
+  const [step, setStep] = useState<Step>("idle");
+  const [error, setError] = useState<string | null>(null);
+  const [result, setResult] = useState<AnalysisResult | null>(null);
+
+  const canSubmit = useMemo(
+    () => !!input.trim() && step === "idle",
+    [input, step],
+  );
+
+  const analyze = useCallback(
+    async (e?: React.FormEvent) => {
+      e?.preventDefault();
+      setError(null);
+      setResult(null);
+
+      const parsed = parseRepoInput(input);
+      if (!parsed) {
+        setError(
+          "Enter a valid repository (e.g. https://github.com/owner/repo, github.com/owner/repo, or owner/repo).",
+        );
+        return;
+      }
+
+      try {
+        setStep("metadata");
+        const meta = await fetchRepoMeta(parsed.owner, parsed.repo, token);
+
+        setStep("branch");
+        const branch = meta.default_branch;
+
+        setStep("sha");
+        const sha = await fetchBranchSha(parsed.owner, parsed.repo, branch, token);
+
+        setStep("tree");
+        const tree = await fetchRecursiveTree(parsed.owner, parsed.repo, sha, token);
+
+        setStep("counting");
+        const counts = countFiles(tree.tree, {
+          includeDotfiles,
+          configAsCode,
+        });
+
+        setStep("preparing");
+        await new Promise((r) => setTimeout(r, 120));
+
+        setResult({
+          fullName: meta.full_name,
+          htmlUrl: meta.html_url,
+          branch,
+          sha,
+          truncated: tree.truncated,
+          counts,
+        });
+        setStep("done");
+      } catch (err) {
+        setError(err instanceof GitHubError ? err.message : "Something went wrong. Please try again.");
+        setStep("idle");
+      }
+    },
+    [input, includeDotfiles, configAsCode, token],
+  );
+
+  // Re-run when toggles change after a successful analysis (client-side only, no re-fetch).
+  const recount = useCallback(
+    (nextDot: boolean, nextCfg: boolean) => {
+      // We don't have the raw tree cached — for simplicity, re-run against API.
+      if (result) {
+        void analyzeAgain(nextDot, nextCfg);
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [result],
+  );
+
+  const analyzeAgain = async (dot: boolean, cfg: boolean) => {
+    if (!result) return;
+    const parsed = parseRepoInput(input);
+    if (!parsed) return;
+    setError(null);
+    try {
+      setStep("tree");
+      const tree = await fetchRecursiveTree(parsed.owner, parsed.repo, result.sha, token);
+      setStep("counting");
+      const counts = countFiles(tree.tree, { includeDotfiles: dot, configAsCode: cfg });
+      setResult({ ...result, counts, truncated: tree.truncated });
+      setStep("done");
+    } catch (err) {
+      setError(err instanceof GitHubError ? err.message : "Something went wrong.");
+      setStep("done");
+    }
+  };
+
+  const reset = () => {
+    setInput("");
+    setResult(null);
+    setError(null);
+    setStep("idle");
+  };
+
+  return (
+    <div className="space-y-8">
+      <section>
+        <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight">
+          Analyze a repository
+        </h1>
+        <p className="mt-2 text-sm text-muted-foreground max-w-xl">
+          Paste any public GitHub repository. We&apos;ll walk its Git tree via the REST API and
+          break the files down by extension.
+        </p>
+      </section>
+
+      <form
+        onSubmit={analyze}
+        className="rounded-lg border border-border bg-card p-5 sm:p-6 space-y-5"
+      >
+        <div className="flex flex-col sm:flex-row gap-2.5">
+          <div className="relative flex-1">
+            <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-muted-foreground text-sm font-mono select-none">
+              →
+            </span>
+            <Input
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              placeholder="owner/repo  or  https://github.com/owner/repo"
+              disabled={step !== "idle" && step !== "done"}
+              className="pl-9 h-11 font-mono text-sm"
+              autoFocus
+            />
+          </div>
+          <Button
+            type="submit"
+            disabled={!canSubmit && step !== "done"}
+            className="h-11 px-5"
+          >
+            {step !== "idle" && step !== "done" ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <>
+                Analyze <ArrowRight className="h-4 w-4 ml-1.5" />
+              </>
+            )}
+          </Button>
+        </div>
+
+        <div className="flex flex-col sm:flex-row sm:items-center gap-4 sm:gap-8 pt-1 border-t border-border/60">
+          <ToggleRow
+            id="dotfiles"
+            label="Include dotfiles"
+            hint="Count hidden files and folders"
+            checked={includeDotfiles}
+            onChange={(v) => {
+              setIncludeDotfiles(v);
+              if (result) recount(v, configAsCode);
+            }}
+          />
+          <ToggleRow
+            id="config"
+            label="Count config files as code"
+            hint="json, yaml, yml, toml, xml"
+            checked={configAsCode}
+            onChange={(v) => {
+              setConfigAsCode(v);
+              if (result) recount(includeDotfiles, v);
+            }}
+          />
+        </div>
+      </form>
+
+      {error ? <ErrorPanel message={error} /> : null}
+
+      {step !== "idle" && step !== "done" ? <LoadingState step={step} /> : null}
+
+      {result && step === "done" ? (
+        <Results result={result} onReset={reset} />
+      ) : null}
+    </div>
+  );
+}
+
+function ToggleRow({
+  id,
+  label,
+  hint,
+  checked,
+  onChange,
+}: {
+  id: string;
+  label: string;
+  hint: string;
+  checked: boolean;
+  onChange: (v: boolean) => void;
+}) {
+  return (
+    <div className="flex items-start gap-3 pt-4 sm:pt-3">
+      <Switch id={id} checked={checked} onCheckedChange={onChange} />
+      <div className="flex flex-col">
+        <Label htmlFor={id} className="text-xs font-medium cursor-pointer">
+          {label}
+        </Label>
+        <span className="text-[11px] text-muted-foreground font-mono">{hint}</span>
+      </div>
+    </div>
+  );
+}
+
+/* ---------- States ---------- */
+
+function LoadingState({ step }: { step: Exclude<Step, "idle" | "done"> }) {
+  const order: Array<Exclude<Step, "idle" | "done">> = [
+    "metadata",
+    "branch",
+    "sha",
+    "tree",
+    "counting",
+    "preparing",
+  ];
+  const currentIdx = order.indexOf(step);
+
+  return (
+    <div className="rounded-lg border border-border bg-card p-5 sm:p-6">
+      <div className="flex items-center gap-2 text-xs font-mono text-muted-foreground mb-4">
+        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+        <span>{STEP_LABEL[step]}</span>
+      </div>
+      <ol className="space-y-1.5">
+        {order.map((s, i) => {
+          const done = i < currentIdx;
+          const active = i === currentIdx;
+          return (
+            <li
+              key={s}
+              className={
+                "text-[12px] font-mono flex items-center gap-2 " +
+                (active
+                  ? "text-foreground"
+                  : done
+                    ? "text-muted-foreground"
+                    : "text-muted-foreground/50")
+              }
+            >
+              <span className="w-4 text-center">
+                {done ? "✓" : active ? "›" : "·"}
+              </span>
+              <span>{STEP_LABEL[s]}</span>
+            </li>
+          );
+        })}
+      </ol>
+    </div>
+  );
+}
+
+function ErrorPanel({ message }: { message: string }) {
+  return (
+    <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-4 flex items-start gap-3">
+      <AlertTriangle className="h-4 w-4 text-destructive mt-0.5 shrink-0" />
+      <div>
+        <div className="text-sm font-medium text-destructive">Unable to analyze</div>
+        <p className="text-xs text-destructive/90 mt-1 leading-relaxed">{message}</p>
+      </div>
+    </div>
+  );
+}
+
+/* ---------- Results ---------- */
+
+function Results({ result, onReset }: { result: AnalysisResult; onReset: () => void }) {
+  const [copied, setCopied] = useState(false);
+
+  const copy = async () => {
+    const md = buildMarkdown({
+      fullName: result.fullName,
+      branch: result.branch,
+      sha: result.sha,
+      totalFiles: result.counts.totalFiles,
+      codeCount: result.counts.codeCount,
+      nonCodeCount: result.counts.nonCodeCount,
+      code: result.counts.code,
+      nonCode: result.counts.nonCode,
+    });
+    try {
+      await navigator.clipboard.writeText(md);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1600);
+    } catch {
+      /* noop */
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      {result.truncated ? (
+        <div className="rounded-lg border border-[color:var(--color-terminal-amber)]/40 bg-[color:var(--color-terminal-amber)]/10 px-4 py-3 text-xs font-mono text-[color:var(--color-terminal-amber)] flex items-start gap-2">
+          <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+          <span>
+            GitHub truncated the tree response — this repository is very large. Counts reflect the
+            returned subset.
+          </span>
+        </div>
+      ) : null}
+
+      <SummaryCard result={result} />
+
+      <div className="flex flex-wrap gap-2">
+        <Button variant="outline" size="sm" onClick={copy} className="h-9">
+          {copied ? (
+            <>
+              <Check className="h-3.5 w-3.5 mr-1.5" /> Copied
+            </>
+          ) : (
+            <>
+              <Copy className="h-3.5 w-3.5 mr-1.5" /> Copy as Markdown
+            </>
+          )}
+        </Button>
+        <Button variant="ghost" size="sm" onClick={onReset} className="h-9">
+          <RotateCcw className="h-3.5 w-3.5 mr-1.5" /> Analyze another repository
+        </Button>
+      </div>
+
+      <ExtensionTable
+        title="Code files"
+        subtitle={`${formatNumber(result.counts.codeCount)} of ${formatNumber(result.counts.totalFiles)} total`}
+        rows={result.counts.code}
+        accent="green"
       />
+      <ExtensionTable
+        title="Non-code files"
+        subtitle={`${formatNumber(result.counts.nonCodeCount)} of ${formatNumber(result.counts.totalFiles)} total`}
+        rows={result.counts.nonCode}
+        accent="cyan"
+      />
+    </div>
+  );
+}
+
+function SummaryCard({ result }: { result: AnalysisResult }) {
+  return (
+    <div className="rounded-lg border border-border bg-card overflow-hidden">
+      <div className="border-b border-border px-5 py-3 flex items-center gap-2">
+        <span className="h-2 w-2 rounded-full bg-[color:var(--color-terminal-green)]" />
+        <span className="text-[11px] font-mono text-muted-foreground">summary</span>
+      </div>
+      <div className="p-5 sm:p-6 grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-5">
+        <SummaryItem
+          label="Repository"
+          value={
+            <a
+              href={result.htmlUrl}
+              target="_blank"
+              rel="noreferrer noopener"
+              className="hover:text-foreground inline-flex items-center gap-1 truncate"
+            >
+              {result.fullName}
+              <ExternalLink className="h-3 w-3 shrink-0" />
+            </a>
+          }
+          className="col-span-2 sm:col-span-3"
+        />
+        <SummaryItem label="Branch" value={result.branch} mono />
+        <SummaryItem
+          label="Commit SHA"
+          value={result.sha.slice(0, 10)}
+          mono
+          title={result.sha}
+        />
+        <SummaryItem label="Total files" value={formatNumber(result.counts.totalFiles)} strong />
+        <SummaryItem
+          label="Code files"
+          value={formatNumber(result.counts.codeCount)}
+          strong
+          accent="green"
+        />
+        <SummaryItem
+          label="Non-code files"
+          value={formatNumber(result.counts.nonCodeCount)}
+          strong
+          accent="cyan"
+        />
+      </div>
+    </div>
+  );
+}
+
+function SummaryItem({
+  label,
+  value,
+  mono,
+  strong,
+  accent,
+  className,
+  title,
+}: {
+  label: string;
+  value: React.ReactNode;
+  mono?: boolean;
+  strong?: boolean;
+  accent?: "green" | "cyan";
+  className?: string;
+  title?: string;
+}) {
+  const accentClass =
+    accent === "green"
+      ? "text-[color:var(--color-terminal-green)]"
+      : accent === "cyan"
+        ? "text-[color:var(--color-terminal-cyan)]"
+        : "text-foreground";
+  return (
+    <div className={className}>
+      <div className="text-[10.5px] font-mono uppercase tracking-wider text-muted-foreground">
+        {label}
+      </div>
+      <div
+        title={title}
+        className={[
+          "mt-1 truncate",
+          mono ? "font-mono text-sm" : "text-sm",
+          strong ? "text-xl font-semibold tracking-tight " + accentClass : "text-foreground",
+        ].join(" ")}
+      >
+        {value}
+      </div>
+    </div>
+  );
+}
+
+function ExtensionTable({
+  title,
+  subtitle,
+  rows,
+  accent,
+}: {
+  title: string;
+  subtitle: string;
+  rows: ExtensionRow[];
+  accent: "green" | "cyan";
+}) {
+  const dot =
+    accent === "green"
+      ? "bg-[color:var(--color-terminal-green)]"
+      : "bg-[color:var(--color-terminal-cyan)]";
+  return (
+    <div className="rounded-lg border border-border bg-card overflow-hidden">
+      <div className="border-b border-border px-5 py-3 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <span className={"h-2 w-2 rounded-full " + dot} />
+          <span className="text-sm font-medium">{title}</span>
+        </div>
+        <span className="text-[11px] font-mono text-muted-foreground">{subtitle}</span>
+      </div>
+      {rows.length === 0 ? (
+        <div className="px-5 py-8 text-center text-xs font-mono text-muted-foreground">
+          No files in this category.
+        </div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-[10.5px] font-mono uppercase tracking-wider text-muted-foreground border-b border-border">
+                <th className="px-5 py-2.5 font-medium">Extension</th>
+                <th className="px-5 py-2.5 font-medium text-right">Count</th>
+                <th className="px-5 py-2.5 font-medium text-right">Percentage</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr
+                  key={r.ext}
+                  className="border-b border-border/50 last:border-0 hover:bg-accent/40 transition-colors"
+                >
+                  <td className="px-5 py-2.5 font-mono text-[13px]">{r.ext}</td>
+                  <td className="px-5 py-2.5 font-mono text-[13px] text-right tabular-nums">
+                    {formatNumber(r.count)}
+                  </td>
+                  <td className="px-5 py-2.5 font-mono text-[13px] text-right tabular-nums text-muted-foreground">
+                    {formatPct(r.percentage)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
