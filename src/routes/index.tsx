@@ -79,7 +79,7 @@ function Index() {
   return (
     <div className="min-h-screen flex flex-col bg-background text-foreground">
       <Header user={auth.user} onSignOut={auth.signOut} />
-      <main className="flex-1 w-full max-w-5xl mx-auto px-5 sm:px-8 py-10 sm:py-16">
+      <main className="flex-1 w-full max-w-5xl mx-auto px-5 sm:px-8 py-10 sm:py-16 pb-44 sm:pb-32">
         {!auth.token || !auth.user ? (
           <SignInPanel onSignIn={auth.signIn} error={auth.error} />
         ) : (
@@ -151,7 +151,7 @@ function Header({
 
 function Footer() {
   return (
-    <footer className="border-t border-border/70">
+    <footer className="fixed bottom-0 inset-x-0 z-10 bg-background border-t border-border/70">
       <div className="max-w-5xl mx-auto px-5 sm:px-8 py-3 sm:h-12 sm:py-0 flex flex-col sm:flex-row items-center justify-center sm:justify-between gap-1.5 sm:gap-0 text-center sm:text-left text-[11px] text-muted-foreground font-mono">
         <span>Runs entirely in your browser. Your token never leaves this device.</span>
         <div className="flex items-center gap-3">
