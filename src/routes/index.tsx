@@ -101,7 +101,7 @@ function Header({
   onSignOut: () => void;
 }) {
   return (
-    <header className="border-b border-border/70">
+    <header className="sticky top-0 z-10 bg-background border-b border-border/70">
       <div className="max-w-5xl mx-auto px-5 sm:px-8 h-14 flex items-center justify-between">
         <div className="flex items-center gap-2.5">
           <img
@@ -154,14 +154,24 @@ function Footer() {
     <footer className="border-t border-border/70">
       <div className="max-w-5xl mx-auto px-5 sm:px-8 py-3 sm:h-12 sm:py-0 flex flex-col sm:flex-row items-center justify-center sm:justify-between gap-1.5 sm:gap-0 text-center sm:text-left text-[11px] text-muted-foreground font-mono">
         <span>Runs entirely in your browser. Your token never leaves this device.</span>
-        <a
-          href="https://docs.github.com/rest"
-          target="_blank"
-          rel="noreferrer noopener"
-          className="hover:text-foreground inline-flex items-center gap-1"
-        >
-          GitHub REST <ExternalLink className="h-3 w-3" />
-        </a>
+        <div className="flex items-center gap-3">
+          <a
+            href="https://github.com/Yuvakunaal/repo-count-pro"
+            target="_blank"
+            rel="noreferrer noopener"
+            className="hover:text-foreground inline-flex items-center gap-1"
+          >
+            <Github className="h-3 w-3" /> Source
+          </a>
+          <a
+            href="https://docs.github.com/rest"
+            target="_blank"
+            rel="noreferrer noopener"
+            className="hover:text-foreground inline-flex items-center gap-1"
+          >
+            GitHub REST <ExternalLink className="h-3 w-3" />
+          </a>
+        </div>
       </div>
     </footer>
   );
