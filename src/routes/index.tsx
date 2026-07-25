@@ -48,15 +48,7 @@ export const Route = createFileRoute("/")({
   component: Index,
 });
 
-type Step =
-  | "idle"
-  | "metadata"
-  | "branch"
-  | "sha"
-  | "tree"
-  | "counting"
-  | "preparing"
-  | "done";
+type Step = "idle" | "metadata" | "branch" | "sha" | "tree" | "counting" | "preparing" | "done";
 
 const STEP_LABEL: Record<Exclude<Step, "idle" | "done">, string> = {
   metadata: "Fetching repository metadata…",
@@ -209,7 +201,6 @@ function Header({
               <HeaderIconTooltip label="Usage">
                 <Link
                   to="/usage"
-                  aria-label="Usage"
                   className="h-8 w-8 grid place-items-center rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
                 >
                   <Gauge className="h-4 w-4" />
@@ -225,7 +216,7 @@ function Header({
                       className="h-8 px-2 sm:px-3 text-xs text-muted-foreground hover:text-foreground"
                     >
                       <LogOut className="h-3.5 w-3.5 sm:mr-1.5" />
-                      <span className="sr-only sm:not-sr-only">Log out</span>
+                      <span className="hidden sm:inline">Log out</span>
                     </Button>
                   </AlertDialogTrigger>
                 </HeaderIconTooltip>
@@ -278,7 +269,7 @@ function Footer() {
       <div className="border-t border-border/40 py-2.5 text-center text-[10.5px] font-mono text-muted-foreground/70">
         → made by{" "}
         <a
-          href="https://kunaal-portfolio.vercel.app/"
+          href="https://www.linkedin.com/in/boggavarapu-yuva-satya-kunaal-127817290/"
           target="_blank"
           rel="noreferrer noopener"
           className="text-muted-foreground hover:text-foreground underline underline-offset-2 decoration-border transition-colors"
@@ -400,10 +391,7 @@ function Analyzer({ token }: { token: string }) {
   const [step, setStep] = useState<Step>(() => (result ? "done" : "idle"));
   const [error, setError] = useState<string | null>(null);
 
-  const canSubmit = useMemo(
-    () => !!input.trim() && step === "idle",
-    [input, step],
-  );
+  const canSubmit = useMemo(() => !!input.trim() && step === "idle", [input, step]);
 
   const analyze = useCallback(
     async (e?: React.FormEvent) => {
@@ -453,7 +441,9 @@ function Analyzer({ token }: { token: string }) {
         });
         setStep("done");
       } catch (err) {
-        setError(err instanceof GitHubError ? err.message : "Something went wrong. Please try again.");
+        setError(
+          err instanceof GitHubError ? err.message : "Something went wrong. Please try again.",
+        );
         setStep("idle");
       }
     },
@@ -484,19 +474,14 @@ function Analyzer({ token }: { token: string }) {
   return (
     <div className="space-y-8">
       <section>
-        <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight">
-          Analyze a repository
-        </h1>
+        <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight">Analyze a repository</h1>
         <p className="mt-2 text-sm text-muted-foreground max-w-xl">
           Paste any public GitHub repository. We&apos;ll walk its Git tree via the REST API and
           break the files down by extension.
         </p>
       </section>
 
-      <form
-        onSubmit={analyze}
-        className="rounded-lg border border-border bg-card p-5 sm:p-6"
-      >
+      <form onSubmit={analyze} className="rounded-lg border border-border bg-card p-5 sm:p-6">
         <div className="flex flex-col sm:flex-row sm:items-end gap-2.5">
           <div className="flex-1">
             <Label
@@ -520,11 +505,7 @@ function Analyzer({ token }: { token: string }) {
               />
             </div>
           </div>
-          <Button
-            type="submit"
-            disabled={!canSubmit && step !== "done"}
-            className="h-11 px-5"
-          >
+          <Button type="submit" disabled={!canSubmit && step !== "done"} className="h-11 px-5">
             {step !== "idle" && step !== "done" ? (
               <Loader2 className="h-4 w-4 animate-spin" />
             ) : (
@@ -646,9 +627,7 @@ function LoadingState({ step }: { step: Exclude<Step, "idle" | "done"> }) {
                     : "text-muted-foreground/50")
               }
             >
-              <span className="w-4 text-center">
-                {done ? "✓" : active ? "›" : "·"}
-              </span>
+              <span className="w-4 text-center">{done ? "✓" : active ? "›" : "·"}</span>
               <span>{STEP_LABEL[s]}</span>
             </li>
           );
@@ -784,12 +763,7 @@ function SummaryCard({ result }: { result: AnalysisResult }) {
           className="col-span-2 sm:col-span-3"
         />
         <SummaryItem label="Branch" value={result.branch} mono />
-        <SummaryItem
-          label="Commit SHA"
-          value={result.sha.slice(0, 10)}
-          mono
-          title={result.sha}
-        />
+        <SummaryItem label="Commit SHA" value={result.sha.slice(0, 10)} mono title={result.sha} />
         <SummaryItem label="Total files" value={formatNumber(result.counts.totalFiles)} strong />
         <SummaryItem
           label="Code files"

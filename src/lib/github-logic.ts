@@ -1,21 +1,71 @@
 // Pure logic — GitHub API + file counting. Mirrors the Python implementation.
 
 export const CODE_EXTENSIONS = new Set([
-  "py","js","ts","jsx","tsx","java","kt","kts","c","h","cc","cpp","cxx","hpp","hh",
-  "cs","go","rs","swift","m","mm","php","rb","r","lua","pl","pm","scala","groovy",
-  "dart","cr","html","css","scss","sass","less","sh","bash","zsh","ps1","sql","tf","hcl",
+  "py",
+  "js",
+  "ts",
+  "jsx",
+  "tsx",
+  "java",
+  "kt",
+  "kts",
+  "c",
+  "h",
+  "cc",
+  "cpp",
+  "cxx",
+  "hpp",
+  "hh",
+  "cs",
+  "go",
+  "rs",
+  "swift",
+  "m",
+  "mm",
+  "php",
+  "rb",
+  "r",
+  "lua",
+  "pl",
+  "pm",
+  "scala",
+  "groovy",
+  "dart",
+  "cr",
+  "html",
+  "css",
+  "scss",
+  "sass",
+  "less",
+  "sh",
+  "bash",
+  "zsh",
+  "ps1",
+  "sql",
+  "tf",
+  "hcl",
 ]);
 
 export const CONFIG_EXTENSIONS = new Set(["json", "yaml", "yml", "toml", "xml"]);
 
 export const SPECIAL_CODE_BASENAMES = new Set([
-  "Makefile","Dockerfile","CMakeLists.txt","BUILD","WORKSPACE",
+  "Makefile",
+  "Dockerfile",
+  "CMakeLists.txt",
+  "BUILD",
+  "WORKSPACE",
 ]);
 
-export interface ParsedRepo { owner: string; repo: string }
+export interface ParsedRepo {
+  owner: string;
+  repo: string;
+}
 
 export function parseRepoInput(input: string): ParsedRepo | null {
-  const s = input.trim().replace(/\.git$/i, "").replace(/\/+$/, "");
+  const s = input
+    .trim()
+    .replace(/\.git$/i, "")
+    .replace(/\/+$/, "");
   if (!s) return null;
   // URL form
   const urlMatch = s.match(/^(?:https?:\/\/)?(?:www\.)?github\.com\/([^/\s]+)\/([^/\s]+)/i);
@@ -50,7 +100,10 @@ function authHeaders(token: string): HeadersInit {
 }
 
 export class GitHubError extends Error {
-  constructor(message: string, public status?: number) {
+  constructor(
+    message: string,
+    public status?: number,
+  ) {
     super(message);
   }
 }
@@ -115,13 +168,19 @@ async function ghFetch<T>(url: string, token: string): Promise<T> {
     throw new GitHubError("Network error contacting GitHub. Check your connection and try again.");
   }
   recordRateLimitHeaders(res, url);
-  if (res.status === 401) throw new GitHubError("Your GitHub token is invalid or expired. Please sign in again.", 401);
+  if (res.status === 401)
+    throw new GitHubError("Your GitHub token is invalid or expired. Please sign in again.", 401);
   if (res.status === 403) {
     const remaining = res.headers.get("x-ratelimit-remaining");
-    if (remaining === "0") throw new GitHubError("GitHub API rate limit reached. Try again in a few minutes.", 403);
-    throw new GitHubError("Access denied by GitHub. The repository may be private or restricted.", 403);
+    if (remaining === "0")
+      throw new GitHubError("GitHub API rate limit reached. Try again in a few minutes.", 403);
+    throw new GitHubError(
+      "Access denied by GitHub. The repository may be private or restricted.",
+      403,
+    );
   }
-  if (res.status === 404) throw new GitHubError("Repository not found. Check the URL and try again.", 404);
+  if (res.status === 404)
+    throw new GitHubError("Repository not found. Check the URL and try again.", 404);
   if (!res.ok) throw new GitHubError(`GitHub request failed (${res.status}).`, res.status);
   return (await res.json()) as T;
 }
@@ -130,7 +189,12 @@ export async function fetchRepoMeta(owner: string, repo: string, token: string):
   return ghFetch<RepoMeta>(`https://api.github.com/repos/${owner}/${repo}`, token);
 }
 
-export async function fetchBranchSha(owner: string, repo: string, branch: string, token: string): Promise<string> {
+export async function fetchBranchSha(
+  owner: string,
+  repo: string,
+  branch: string,
+  token: string,
+): Promise<string> {
   const b = await ghFetch<{ commit: { sha: string } }>(
     `https://api.github.com/repos/${owner}/${repo}/branches/${encodeURIComponent(branch)}`,
     token,
@@ -144,7 +208,12 @@ export interface TreeResult {
   truncated: boolean;
 }
 
-export async function fetchRecursiveTree(owner: string, repo: string, sha: string, token: string): Promise<TreeResult> {
+export async function fetchRecursiveTree(
+  owner: string,
+  repo: string,
+  sha: string,
+  token: string,
+): Promise<TreeResult> {
   return ghFetch<TreeResult>(
     `https://api.github.com/repos/${owner}/${repo}/git/trees/${sha}?recursive=1`,
     token,
@@ -156,7 +225,11 @@ export interface CountOptions {
   configAsCode: boolean;
 }
 
-export interface ExtensionRow { ext: string; count: number; percentage: number }
+export interface ExtensionRow {
+  ext: string;
+  count: number;
+  percentage: number;
+}
 export interface CountResult {
   totalFiles: number;
   codeCount: number;
@@ -222,7 +295,11 @@ export function countFiles(entries: GitTreeEntry[], opts: CountOptions): CountRe
   };
 }
 
-export interface GitHubUser { login: string; avatar_url: string; name?: string | null }
+export interface GitHubUser {
+  login: string;
+  avatar_url: string;
+  name?: string | null;
+}
 
 export async function fetchUser(token: string): Promise<GitHubUser> {
   return ghFetch<GitHubUser>("https://api.github.com/user", token);
@@ -272,7 +349,13 @@ export function buildMarkdown(meta: {
   const table = (rows: ExtensionRow[]) => {
     if (!rows.length) return "_None_\n";
     const head = "| Extension | Count | Percentage |\n|---|---:|---:|\n";
-    return head + rows.map((r) => `| \`${r.ext}\` | ${formatNumber(r.count)} | ${formatPct(r.percentage)} |`).join("\n") + "\n";
+    return (
+      head +
+      rows
+        .map((r) => `| \`${r.ext}\` | ${formatNumber(r.count)} | ${formatPct(r.percentage)} |`)
+        .join("\n") +
+      "\n"
+    );
   };
   return [
     `# Repository File Count — ${meta.fullName}`,
