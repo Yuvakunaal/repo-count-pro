@@ -9,9 +9,10 @@ Paste in any public repo, sign in with a GitHub token, and get a clean count in 
 - **Full repository breakdown** — walks the entire file tree of any public GitHub repo and counts every file in it.
 - **Code vs. non-code** — separates source files from docs, assets, configs, and everything else, so you get a real sense of a project's size.
 - **Breakdown by extension** — see exactly how many `.ts`, `.py`, `.go`, `.md`, and other files make up the repository.
-- **Configurable counting** — toggle whether dotfiles are included and whether config files (`json`, `yaml`, `yml`, `toml`, `xml`) count as code, with results updating instantly.
+- **Instant filtering** — after analyzing, toggle whether dotfiles are included and whether config files (`json`, `yaml`, `yml`, `toml`, `xml`) count as code. Results update immediately, with no extra fetching.
 - **Handles large repositories** — flags when GitHub truncates very large trees so counts stay honest about what was actually measured.
 - **Copy as Markdown** — grab a shareable summary of the results in one click, ready to paste into a PR, README, or notes.
+- **API usage at a glance** — a dedicated usage view shows how much of your hourly GitHub API rate limit you've used, sourced from your own recent activity so it never costs a request to check.
 - **Runs entirely in your browser** — your GitHub token is used only to talk to GitHub's API directly from your device. It's never sent anywhere else or stored on a server.
 
 ## How it works
