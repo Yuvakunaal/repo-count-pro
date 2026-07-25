@@ -29,6 +29,7 @@ import {
   GitHubError,
   type CountResult,
   type ExtensionRow,
+  type GitTreeEntry,
 } from "@/lib/github-logic";
 
 export const Route = createFileRoute("/")({
@@ -256,6 +257,7 @@ function Analyzer({ token }: { token: string }) {
   const [step, setStep] = useState<Step>("idle");
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<AnalysisResult | null>(null);
+  const [rawTree, setRawTree] = useState<GitTreeEntry[] | null>(null);
 
   const canSubmit = useMemo(
     () => !!input.trim() && step === "idle",
@@ -267,6 +269,7 @@ function Analyzer({ token }: { token: string }) {
       e?.preventDefault();
       setError(null);
       setResult(null);
+      setRawTree(null);
 
       const parsed = parseRepoInput(input);
       if (!parsed) {
@@ -298,6 +301,7 @@ function Analyzer({ token }: { token: string }) {
         setStep("preparing");
         await new Promise((r) => setTimeout(r, 120));
 
+        setRawTree(tree.tree);
         setResult({
           fullName: meta.full_name,
           htmlUrl: meta.html_url,
@@ -315,39 +319,23 @@ function Analyzer({ token }: { token: string }) {
     [input, includeDotfiles, configAsCode, token],
   );
 
-  // Re-run when toggles change after a successful analysis (client-side only, no re-fetch).
-  const recount = useCallback(
+  // The full tree is already cached from the initial fetch, so filtering after
+  // analysis is instant — no re-fetch, just re-run the pure count over rawTree.
+  const applyFilters = useCallback(
     (nextDot: boolean, nextCfg: boolean) => {
-      // We don't have the raw tree cached — for simplicity, re-run against API.
-      if (result) {
-        void analyzeAgain(nextDot, nextCfg);
-      }
+      setIncludeDotfiles(nextDot);
+      setConfigAsCode(nextCfg);
+      if (!rawTree) return;
+      const counts = countFiles(rawTree, { includeDotfiles: nextDot, configAsCode: nextCfg });
+      setResult((prev) => (prev ? { ...prev, counts } : prev));
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [result],
+    [rawTree],
   );
-
-  const analyzeAgain = async (dot: boolean, cfg: boolean) => {
-    if (!result) return;
-    const parsed = parseRepoInput(input);
-    if (!parsed) return;
-    setError(null);
-    try {
-      setStep("tree");
-      const tree = await fetchRecursiveTree(parsed.owner, parsed.repo, result.sha, token);
-      setStep("counting");
-      const counts = countFiles(tree.tree, { includeDotfiles: dot, configAsCode: cfg });
-      setResult({ ...result, counts, truncated: tree.truncated });
-      setStep("done");
-    } catch (err) {
-      setError(err instanceof GitHubError ? err.message : "Something went wrong.");
-      setStep("done");
-    }
-  };
 
   const reset = () => {
     setInput("");
     setResult(null);
+    setRawTree(null);
     setError(null);
     setStep("idle");
   };
@@ -366,7 +354,7 @@ function Analyzer({ token }: { token: string }) {
 
       <form
         onSubmit={analyze}
-        className="rounded-lg border border-border bg-card p-5 sm:p-6 space-y-5"
+        className="rounded-lg border border-border bg-card p-5 sm:p-6"
       >
         <div className="flex flex-col sm:flex-row gap-2.5">
           <div className="relative flex-1">
@@ -396,29 +384,6 @@ function Analyzer({ token }: { token: string }) {
             )}
           </Button>
         </div>
-
-        <div className="flex flex-col sm:flex-row sm:items-center gap-4 sm:gap-8 pt-1 border-t border-border/60">
-          <ToggleRow
-            id="dotfiles"
-            label="Include dotfiles"
-            hint="Count hidden files and folders"
-            checked={includeDotfiles}
-            onChange={(v) => {
-              setIncludeDotfiles(v);
-              if (result) recount(v, configAsCode);
-            }}
-          />
-          <ToggleRow
-            id="config"
-            label="Count config files as code"
-            hint="json, yaml, yml, toml, xml"
-            checked={configAsCode}
-            onChange={(v) => {
-              setConfigAsCode(v);
-              if (result) recount(includeDotfiles, v);
-            }}
-          />
-        </div>
       </form>
 
       {error ? <ErrorPanel message={error} /> : null}
@@ -426,7 +391,13 @@ function Analyzer({ token }: { token: string }) {
       {step !== "idle" && step !== "done" ? <LoadingState step={step} /> : null}
 
       {result && step === "done" ? (
-        <Results result={result} onReset={reset} />
+        <Results
+          result={result}
+          onReset={reset}
+          includeDotfiles={includeDotfiles}
+          configAsCode={configAsCode}
+          onFilterChange={applyFilters}
+        />
       ) : null}
     </div>
   );
@@ -446,7 +417,7 @@ function ToggleRow({
   onChange: (v: boolean) => void;
 }) {
   return (
-    <div className="flex items-start gap-3 pt-4 sm:pt-3">
+    <div className="flex items-start gap-3">
       <Switch id={id} checked={checked} onCheckedChange={onChange} />
       <div className="flex flex-col">
         <Label htmlFor={id} className="text-xs font-medium cursor-pointer">
@@ -454,6 +425,38 @@ function ToggleRow({
         </Label>
         <span className="text-[11px] text-muted-foreground font-mono">{hint}</span>
       </div>
+    </div>
+  );
+}
+
+function FilterBar({
+  includeDotfiles,
+  configAsCode,
+  onChange,
+}: {
+  includeDotfiles: boolean;
+  configAsCode: boolean;
+  onChange: (nextDot: boolean, nextCfg: boolean) => void;
+}) {
+  return (
+    <div className="rounded-lg border border-border bg-card px-5 py-4 sm:px-6 flex flex-col sm:flex-row sm:items-center gap-4 sm:gap-8">
+      <span className="text-[10.5px] font-mono uppercase tracking-wider text-muted-foreground shrink-0">
+        Filters
+      </span>
+      <ToggleRow
+        id="dotfiles"
+        label="Include dotfiles"
+        hint="Count hidden files and folders"
+        checked={includeDotfiles}
+        onChange={(v) => onChange(v, configAsCode)}
+      />
+      <ToggleRow
+        id="config"
+        label="Count config files as code"
+        hint="json, yaml, yml, toml, xml"
+        checked={configAsCode}
+        onChange={(v) => onChange(includeDotfiles, v)}
+      />
     </div>
   );
 }
@@ -519,7 +522,19 @@ function ErrorPanel({ message }: { message: string }) {
 
 /* ---------- Results ---------- */
 
-function Results({ result, onReset }: { result: AnalysisResult; onReset: () => void }) {
+function Results({
+  result,
+  onReset,
+  includeDotfiles,
+  configAsCode,
+  onFilterChange,
+}: {
+  result: AnalysisResult;
+  onReset: () => void;
+  includeDotfiles: boolean;
+  configAsCode: boolean;
+  onFilterChange: (nextDot: boolean, nextCfg: boolean) => void;
+}) {
   const [copied, setCopied] = useState(false);
 
   const copy = async () => {
@@ -553,6 +568,12 @@ function Results({ result, onReset }: { result: AnalysisResult; onReset: () => v
           </span>
         </div>
       ) : null}
+
+      <FilterBar
+        includeDotfiles={includeDotfiles}
+        configAsCode={configAsCode}
+        onChange={onFilterChange}
+      />
 
       <SummaryCard result={result} />
 
