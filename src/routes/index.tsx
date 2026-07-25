@@ -3,7 +3,6 @@ import { useCallback, useMemo, useState } from "react";
 import {
   Github,
   LogOut,
-  Terminal,
   Loader2,
   Copy,
   Check,
@@ -103,9 +102,11 @@ function Header({
     <header className="border-b border-border/70">
       <div className="max-w-5xl mx-auto px-5 sm:px-8 h-14 flex items-center justify-between">
         <div className="flex items-center gap-2.5">
-          <div className="h-7 w-7 rounded-md bg-foreground/5 border border-border grid place-items-center">
-            <Terminal className="h-3.5 w-3.5 text-foreground" />
-          </div>
+          <img
+            src="/logo.png"
+            alt="Repository File Count"
+            className="h-8 w-8 rounded-[9px] border border-border/60"
+          />
           <div className="flex flex-col leading-tight">
             <span className="text-[13px] font-semibold tracking-tight">Repository File Count</span>
             <span className="text-[10.5px] text-muted-foreground font-mono">
@@ -142,7 +143,7 @@ function Header({
 function Footer() {
   return (
     <footer className="border-t border-border/70">
-      <div className="max-w-5xl mx-auto px-5 sm:px-8 h-12 flex items-center justify-between text-[11px] text-muted-foreground font-mono">
+      <div className="max-w-5xl mx-auto px-5 sm:px-8 py-3 sm:h-12 sm:py-0 flex flex-col sm:flex-row items-center justify-center sm:justify-between gap-1.5 sm:gap-0 text-center sm:text-left text-[11px] text-muted-foreground font-mono">
         <span>Runs entirely in your browser. Your token never leaves this device.</span>
         <a
           href="https://docs.github.com/rest"
