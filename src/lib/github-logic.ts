@@ -175,6 +175,27 @@ export async function fetchUser(token: string): Promise<GitHubUser> {
   return ghFetch<GitHubUser>("https://api.github.com/user", token);
 }
 
+export interface RateLimitInfo {
+  limit: number;
+  remaining: number;
+  used: number;
+  reset: number;
+}
+
+// Checking this endpoint does not count against the rate limit itself.
+export async function fetchRateLimit(token: string): Promise<RateLimitInfo> {
+  const data = await ghFetch<{
+    resources: { core: { limit: number; remaining: number; reset: number; used?: number } };
+  }>("https://api.github.com/rate_limit", token);
+  const core = data.resources.core;
+  return {
+    limit: core.limit,
+    remaining: core.remaining,
+    reset: core.reset,
+    used: core.used ?? core.limit - core.remaining,
+  };
+}
+
 export function formatNumber(n: number): string {
   return n.toLocaleString("en-US");
 }

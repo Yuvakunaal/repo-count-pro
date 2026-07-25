@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useCallback, useMemo, useState } from "react";
 import {
   Github,
@@ -10,6 +10,7 @@ import {
   AlertTriangle,
   ExternalLink,
   ArrowRight,
+  Gauge,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -126,6 +127,13 @@ function Header({
               />
               <span className="text-xs font-mono text-muted-foreground">{user.login}</span>
             </div>
+            <Link
+              to="/usage"
+              title="API usage"
+              className="h-8 w-8 grid place-items-center rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+            >
+              <Gauge className="h-4 w-4" />
+            </Link>
             <Button
               variant="ghost"
               size="sm"
