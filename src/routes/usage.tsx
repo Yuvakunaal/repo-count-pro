@@ -1,14 +1,12 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { formatDistanceToNowStrict } from "date-fns";
 import { ArrowLeft, Loader2, AlertTriangle } from "lucide-react";
 
 import { useGitHubAuth } from "@/lib/auth-store";
 import {
-  fetchUser,
   formatNumber,
   getLastSeenRateLimit,
-  GitHubError,
   type RateLimitHeaderSnapshot,
 } from "@/lib/github-logic";
 
@@ -41,7 +39,7 @@ function UsagePage() {
             </Link>
           </div>
         ) : (
-          <UsageContent token={auth.token} />
+          <UsageContent />
         )}
       </main>
     </div>
@@ -63,35 +61,16 @@ function TopBar() {
   );
 }
 
-function UsageContent({ token }: { token: string }) {
-  const [snapshot, setSnapshot] = useState<RateLimitHeaderSnapshot | null>(() =>
-    getLastSeenRateLimit(),
-  );
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  // GitHub's dedicated /rate_limit endpoint can lag behind real activity by
-  // several minutes (confirmed: a real request reported used=12 in its own
-  // headers while /rate_limit said 0 seconds later). So this fetches a cheap
-  // real endpoint instead and reads the fresh headers off that response.
-  // Runs automatically on mount — a browser refresh or opening this page from
-  // the header icon both remount this component, no manual button needed.
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      await fetchUser(token);
-      setSnapshot(getLastSeenRateLimit());
-    } catch (err) {
-      setError(err instanceof GitHubError ? err.message : "Failed to load usage.");
-    } finally {
-      setLoading(false);
-    }
-  }, [token]);
+function UsageContent() {
+  // Purely passive: never makes a request of its own. It only ever reflects
+  // headers captured incidentally from real app usage (e.g. analyzing a
+  // repo), so viewing or repeatedly refreshing this page is always free —
+  // there's no number here to "farm" by reloading.
+  const [snapshot, setSnapshot] = useState<RateLimitHeaderSnapshot | null>(null);
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    setSnapshot(getLastSeenRateLimit());
+  }, []);
 
   const usedPct = snapshot ? Math.min(100, (snapshot.used / snapshot.limit) * 100) : 0;
   const resetDate = snapshot ? new Date(snapshot.reset * 1000) : null;
@@ -101,21 +80,10 @@ function UsageContent({ token }: { token: string }) {
       <section>
         <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight">API usage</h1>
         <p className="mt-2 text-sm text-muted-foreground">
-          Read straight from the headers on your last real GitHub API request — the reliable source.
-          GitHub's separate usage-check endpoint can lag behind real activity, so the numbers below
-          don't rely on it. Reopen this page to get a fresh reading.
+          Read straight from the headers on your last real GitHub API request. Viewing or refreshing
+          this page never uses a request — analyze a repository to update the numbers.
         </p>
       </section>
-
-      {error ? (
-        <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-4 flex items-start gap-3">
-          <AlertTriangle className="h-4 w-4 text-destructive mt-0.5 shrink-0" />
-          <div>
-            <div className="text-sm font-medium text-destructive">Couldn't load usage</div>
-            <p className="text-xs text-destructive/90 mt-1 leading-relaxed">{error}</p>
-          </div>
-        </div>
-      ) : null}
 
       {snapshot && snapshot.limit <= 60 ? (
         <div className="rounded-lg border border-[color:var(--color-terminal-amber)]/40 bg-[color:var(--color-terminal-amber)]/10 px-4 py-3 text-xs font-mono text-[color:var(--color-terminal-amber)] flex items-start gap-2">
@@ -128,18 +96,17 @@ function UsageContent({ token }: { token: string }) {
         </div>
       ) : null}
 
-      {!snapshot && loading ? (
-        <div className="rounded-lg border border-border bg-card p-6 grid place-items-center py-16">
-          <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+      {!snapshot ? (
+        <div className="rounded-lg border border-border bg-card p-6 sm:p-8 text-center">
+          <p className="text-sm text-muted-foreground">
+            No usage recorded yet in this browser. Analyze a repository to see it here.
+          </p>
         </div>
-      ) : !snapshot ? null : (
+      ) : (
         <div className="rounded-lg border border-border bg-card overflow-hidden">
           <div className="border-b border-border px-5 py-3 flex items-center gap-2">
             <span className="h-2 w-2 rounded-full bg-[color:var(--color-terminal-green)]" />
             <span className="text-[11px] font-mono text-muted-foreground">rate limit</span>
-            {loading ? (
-              <Loader2 className="h-3 w-3 animate-spin text-muted-foreground ml-1" />
-            ) : null}
           </div>
 
           <div className="p-5 sm:p-6 space-y-6">
