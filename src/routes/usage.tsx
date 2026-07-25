@@ -3,15 +3,12 @@ import { useCallback, useEffect, useState } from "react";
 import { formatDistanceToNowStrict } from "date-fns";
 import { ArrowLeft, Loader2, AlertTriangle } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
 import { useGitHubAuth } from "@/lib/auth-store";
 import {
   fetchUser,
-  fetchRateLimit,
   formatNumber,
   getLastSeenRateLimit,
   GitHubError,
-  type RateLimitInfo,
   type RateLimitHeaderSnapshot,
 } from "@/lib/github-logic";
 
@@ -174,66 +171,10 @@ function UsageContent({ token }: { token: string }) {
                 ) : null}
               </div>
             </div>
-
-            <p className="text-[11px] font-mono text-muted-foreground break-all">
-              from GET {snapshot.url.replace("https://api.github.com", "")} ·{" "}
-              {formatDistanceToNowStrict(new Date(snapshot.seenAt))} ago
-            </p>
           </div>
         </div>
       )}
-
-      <DedicatedCheckPanel token={token} />
     </div>
-  );
-}
-
-function DedicatedCheckPanel({ token }: { token: string }) {
-  const [data, setData] = useState<RateLimitInfo | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const check = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      setData(await fetchRateLimit(token));
-    } catch (err) {
-      setError(err instanceof GitHubError ? err.message : "Failed to check.");
-    } finally {
-      setLoading(false);
-    }
-  }, [token]);
-
-  return (
-    <details className="group rounded-lg border border-border bg-card px-4 py-3">
-      <summary className="cursor-pointer text-[11px] font-mono text-muted-foreground hover:text-foreground select-none">
-        GitHub's dedicated usage-check endpoint (for comparison — known to lag behind real activity)
-      </summary>
-      <div className="mt-3 space-y-3">
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => void check()}
-          disabled={loading}
-          className="h-8"
-        >
-          {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : null}
-          Check /rate_limit (free — doesn't use a request)
-        </Button>
-        {error ? <p className="text-xs text-destructive">{error}</p> : null}
-        {data ? (
-          <>
-            <p className="text-xs font-mono text-muted-foreground">
-              used {formatNumber(data.used)} of {formatNumber(data.limit)}
-            </p>
-            <pre className="rounded-md border border-border bg-background p-3 text-[10.5px] font-mono text-muted-foreground overflow-x-auto whitespace-pre-wrap break-all">
-              {JSON.stringify(data.raw, null, 2)}
-            </pre>
-          </>
-        ) : null}
-      </div>
-    </details>
   );
 }
 
