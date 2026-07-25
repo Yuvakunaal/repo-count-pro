@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import {
   Github,
   LogOut,
@@ -17,6 +17,18 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useGitHubAuth } from "@/lib/auth-store";
 import { useCachedAnalysisState, type AnalysisResult } from "@/lib/analysis-cache";
 import {
@@ -83,6 +95,64 @@ function Index() {
 
 /* ---------- Header / Footer ---------- */
 
+// Radix's own hover tooltip ignores touch input by design, so a long-press on
+// mobile is handled entirely separately here via a small local "peek" label —
+// held past `ms` reveals it and suppresses the tap that would otherwise
+// follow; a quick tap still acts normally (navigate / open dialog).
+function useLongPress(onLongPress: () => void, ms = 500) {
+  const timerRef = useRef<number | null>(null);
+  const firedRef = useRef(false);
+
+  const start = useCallback(() => {
+    firedRef.current = false;
+    timerRef.current = window.setTimeout(() => {
+      firedRef.current = true;
+      onLongPress();
+    }, ms);
+  }, [onLongPress, ms]);
+
+  const cancel = useCallback(() => {
+    if (timerRef.current !== null) {
+      window.clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+  }, []);
+
+  const end = useCallback(
+    (e: React.TouchEvent) => {
+      cancel();
+      if (firedRef.current) e.preventDefault();
+    },
+    [cancel],
+  );
+
+  return { onTouchStart: start, onTouchEnd: end, onTouchMove: cancel, onTouchCancel: cancel };
+}
+
+function HeaderIconTooltip({ label, children }: { label: string; children: React.ReactElement }) {
+  const [peek, setPeek] = useState(false);
+  const longPress = useLongPress(() => {
+    setPeek(true);
+    window.setTimeout(() => setPeek(false), 1500);
+  });
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className="relative inline-flex" {...longPress}>
+          {children}
+          {peek ? (
+            <span className="absolute -bottom-8 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-md bg-primary px-2.5 py-1 text-[11px] text-primary-foreground shadow-md z-20 sm:hidden">
+              {label}
+            </span>
+          ) : null}
+        </span>
+      </TooltipTrigger>
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
+  );
+}
+
 function Header({
   user,
   onSignOut,
@@ -108,31 +178,59 @@ function Header({
         </div>
 
         {user ? (
-          <div className="flex items-center gap-3">
-            <div className="hidden sm:flex items-center gap-2">
-              <img
-                src={user.avatar_url}
-                alt={user.login}
-                className="h-6 w-6 rounded-full border border-border"
-              />
-              <span className="text-xs font-mono text-muted-foreground">{user.login}</span>
+          <TooltipProvider delayDuration={300}>
+            <div className="flex items-center gap-3">
+              <HeaderIconTooltip label={user.login}>
+                <div className="flex items-center gap-2">
+                  <img
+                    src={user.avatar_url}
+                    alt={user.login}
+                    className="h-6 w-6 rounded-full border border-border"
+                  />
+                  <span className="hidden sm:inline text-xs font-mono text-muted-foreground">
+                    {user.login}
+                  </span>
+                </div>
+              </HeaderIconTooltip>
+
+              <HeaderIconTooltip label="Usage">
+                <Link
+                  to="/usage"
+                  className="h-8 w-8 grid place-items-center rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+                >
+                  <Gauge className="h-4 w-4" />
+                </Link>
+              </HeaderIconTooltip>
+
+              <AlertDialog>
+                <HeaderIconTooltip label="Log out">
+                  <AlertDialogTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 px-2 sm:px-3 text-xs text-muted-foreground hover:text-foreground"
+                    >
+                      <LogOut className="h-3.5 w-3.5 sm:mr-1.5" />
+                      <span className="hidden sm:inline">Log out</span>
+                    </Button>
+                  </AlertDialogTrigger>
+                </HeaderIconTooltip>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Log out?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      You'll need to sign in again with your GitHub token to analyze another
+                      repository.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                    <AlertDialogAction onClick={onSignOut}>Log out</AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
             </div>
-            <Link
-              to="/usage"
-              title="API usage"
-              className="h-8 w-8 grid place-items-center rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
-            >
-              <Gauge className="h-4 w-4" />
-            </Link>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={onSignOut}
-              className="h-8 text-xs text-muted-foreground hover:text-foreground"
-            >
-              <LogOut className="h-3.5 w-3.5 mr-1.5" /> Log out
-            </Button>
-          </div>
+          </TooltipProvider>
         ) : null}
       </div>
     </header>
@@ -385,19 +483,28 @@ function Analyzer({ token }: { token: string }) {
         onSubmit={analyze}
         className="rounded-lg border border-border bg-card p-5 sm:p-6"
       >
-        <div className="flex flex-col sm:flex-row gap-2.5">
-          <div className="relative flex-1">
-            <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-muted-foreground text-sm font-mono select-none">
-              →
-            </span>
-            <Input
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              placeholder="owner/repo  or  https://github.com/owner/repo"
-              disabled={step !== "idle" && step !== "done"}
-              className="pl-9 h-11 font-mono text-sm"
-              autoFocus
-            />
+        <div className="flex flex-col sm:flex-row sm:items-end gap-2.5">
+          <div className="flex-1">
+            <Label
+              htmlFor="repo-input"
+              className="mb-1.5 block text-[11px] font-mono font-normal text-muted-foreground"
+            >
+              owner/repo &nbsp;or&nbsp; https://github.com/owner/repo
+            </Label>
+            <div className="relative">
+              <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-muted-foreground text-sm font-mono select-none">
+                →
+              </span>
+              <Input
+                id="repo-input"
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                placeholder="Type or paste here…"
+                disabled={step !== "idle" && step !== "done"}
+                className="pl-9 h-11 font-mono text-sm"
+                autoFocus
+              />
+            </div>
           </div>
           <Button
             type="submit"
