@@ -173,6 +173,17 @@ function Footer() {
           </a>
         </div>
       </div>
+      <div className="border-t border-border/40 py-2.5 text-center text-[10.5px] font-mono text-muted-foreground/70">
+        → made by{" "}
+        <a
+          href="https://kunaal-portfolio.vercel.app/"
+          target="_blank"
+          rel="noreferrer noopener"
+          className="text-muted-foreground hover:text-foreground underline underline-offset-2 decoration-border transition-colors"
+        >
+          Kunaal
+        </a>
+      </div>
     </footer>
   );
 }
