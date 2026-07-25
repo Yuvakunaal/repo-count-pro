@@ -85,7 +85,21 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
         content: "A polished, browser-only file-count analyzer for GitHub repositories.",
       },
       { property: "og:type", content: "website" },
+      { property: "og:url", content: "https://repo-file-count.vercel.app/" },
+      { property: "og:image", content: "https://repo-file-count.vercel.app/og-hero.png" },
+      { property: "og:image:width", content: "1200" },
+      { property: "og:image:height", content: "630" },
+      {
+        property: "og:image:alt",
+        content: "Repository File Count — github → tree → count",
+      },
       { name: "twitter:card", content: "summary_large_image" },
+      { name: "twitter:title", content: "Repository File Count" },
+      {
+        name: "twitter:description",
+        content: "A polished, browser-only file-count analyzer for GitHub repositories.",
+      },
+      { name: "twitter:image", content: "https://repo-file-count.vercel.app/og-hero.png" },
     ],
     links: [
       {
