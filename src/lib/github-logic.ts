@@ -58,7 +58,7 @@ export class GitHubError extends Error {
 async function ghFetch<T>(url: string, token: string): Promise<T> {
   let res: Response;
   try {
-    res = await fetch(url, { headers: authHeaders(token) });
+    res = await fetch(url, { headers: authHeaders(token), cache: "no-store" });
   } catch {
     throw new GitHubError("Network error contacting GitHub. Check your connection and try again.");
   }
@@ -180,6 +180,7 @@ export interface RateLimitInfo {
   remaining: number;
   used: number;
   reset: number;
+  raw: unknown;
 }
 
 // Checking this endpoint does not count against the rate limit itself.
@@ -193,6 +194,7 @@ export async function fetchRateLimit(token: string): Promise<RateLimitInfo> {
     remaining: core.remaining,
     reset: core.reset,
     used: core.used ?? core.limit - core.remaining,
+    raw: data,
   };
 }
 

@@ -103,6 +103,17 @@ function UsageContent({ token }: { token: string }) {
         </div>
       ) : null}
 
+      {data && data.limit <= 60 ? (
+        <div className="rounded-lg border border-[color:var(--color-terminal-amber)]/40 bg-[color:var(--color-terminal-amber)]/10 px-4 py-3 text-xs font-mono text-[color:var(--color-terminal-amber)] flex items-start gap-2">
+          <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+          <span>
+            A limit of {formatNumber(data.limit)}/hour is GitHub's rate for unauthenticated
+            requests, not the 5,000/hour a signed-in token gets. This check likely isn't carrying
+            your token — see the raw response below.
+          </span>
+        </div>
+      ) : null}
+
       {loading && !data ? (
         <div className="rounded-lg border border-border bg-card p-6 grid place-items-center py-16">
           <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
@@ -151,6 +162,15 @@ function UsageContent({ token }: { token: string }) {
                 ) : null}
               </div>
             </div>
+
+            <details className="group">
+              <summary className="cursor-pointer text-[11px] font-mono text-muted-foreground hover:text-foreground select-none">
+                Raw response from GitHub
+              </summary>
+              <pre className="mt-2 rounded-md border border-border bg-background p-3 text-[10.5px] font-mono text-muted-foreground overflow-x-auto whitespace-pre-wrap break-all">
+                {JSON.stringify(data.raw, null, 2)}
+              </pre>
+            </details>
           </div>
         </div>
       ) : null}
