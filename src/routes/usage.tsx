@@ -1,7 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { formatDistanceToNowStrict } from "date-fns";
-import { ArrowLeft, Loader2, AlertTriangle, RefreshCw } from "lucide-react";
+import { ArrowLeft, Loader2, AlertTriangle } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { useGitHubAuth } from "@/lib/auth-store";
@@ -70,25 +70,31 @@ function UsageContent({ token }: { token: string }) {
   const [snapshot, setSnapshot] = useState<RateLimitHeaderSnapshot | null>(() =>
     getLastSeenRateLimit(),
   );
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   // GitHub's dedicated /rate_limit endpoint can lag behind real activity by
   // several minutes (confirmed: a real request reported used=12 in its own
-  // headers while /rate_limit said 0 seconds later). So "refresh" here hits a
-  // cheap real endpoint instead and reads the fresh headers off that response.
-  const refresh = useCallback(async () => {
+  // headers while /rate_limit said 0 seconds later). So this fetches a cheap
+  // real endpoint instead and reads the fresh headers off that response.
+  // Runs automatically on mount — a browser refresh or opening this page from
+  // the header icon both remount this component, no manual button needed.
+  const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
       await fetchUser(token);
       setSnapshot(getLastSeenRateLimit());
     } catch (err) {
-      setError(err instanceof GitHubError ? err.message : "Failed to refresh usage.");
+      setError(err instanceof GitHubError ? err.message : "Failed to load usage.");
     } finally {
       setLoading(false);
     }
   }, [token]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
 
   const usedPct = snapshot ? Math.min(100, (snapshot.used / snapshot.limit) * 100) : 0;
   const resetDate = snapshot ? new Date(snapshot.reset * 1000) : null;
@@ -100,7 +106,7 @@ function UsageContent({ token }: { token: string }) {
         <p className="mt-2 text-sm text-muted-foreground">
           Read straight from the headers on your last real GitHub API request — the reliable source.
           GitHub's separate usage-check endpoint can lag behind real activity, so the numbers below
-          don't rely on it.
+          don't rely on it. Reopen this page to get a fresh reading.
         </p>
       </section>
 
@@ -108,7 +114,7 @@ function UsageContent({ token }: { token: string }) {
         <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-4 flex items-start gap-3">
           <AlertTriangle className="h-4 w-4 text-destructive mt-0.5 shrink-0" />
           <div>
-            <div className="text-sm font-medium text-destructive">Couldn't refresh</div>
+            <div className="text-sm font-medium text-destructive">Couldn't load usage</div>
             <p className="text-xs text-destructive/90 mt-1 leading-relaxed">{error}</p>
           </div>
         </div>
@@ -125,39 +131,18 @@ function UsageContent({ token }: { token: string }) {
         </div>
       ) : null}
 
-      {!snapshot ? (
-        <div className="rounded-lg border border-border bg-card p-6 sm:p-8 text-center space-y-4">
-          <p className="text-sm text-muted-foreground">
-            No request recorded yet in this browser. Analyze a repository, or check now — this uses
-            1 request.
-          </p>
-          <Button onClick={() => void refresh()} disabled={loading} className="h-9">
-            {loading ? (
-              <Loader2 className="h-4 w-4 animate-spin mr-1.5" />
-            ) : (
-              <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
-            )}
-            Check now
-          </Button>
+      {!snapshot && loading ? (
+        <div className="rounded-lg border border-border bg-card p-6 grid place-items-center py-16">
+          <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
         </div>
-      ) : (
+      ) : !snapshot ? null : (
         <div className="rounded-lg border border-border bg-card overflow-hidden">
-          <div className="border-b border-border px-5 py-3 flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <span className="h-2 w-2 rounded-full bg-[color:var(--color-terminal-green)]" />
-              <span className="text-[11px] font-mono text-muted-foreground">rate limit</span>
-            </div>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => void refresh()}
-              disabled={loading}
-              title="Uses 1 request to get a fresh reading"
-              className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
-            >
-              <RefreshCw className={"h-3.5 w-3.5 mr-1.5" + (loading ? " animate-spin" : "")} />
-              Refresh
-            </Button>
+          <div className="border-b border-border px-5 py-3 flex items-center gap-2">
+            <span className="h-2 w-2 rounded-full bg-[color:var(--color-terminal-green)]" />
+            <span className="text-[11px] font-mono text-muted-foreground">rate limit</span>
+            {loading ? (
+              <Loader2 className="h-3 w-3 animate-spin text-muted-foreground ml-1" />
+            ) : null}
           </div>
 
           <div className="p-5 sm:p-6 space-y-6">
