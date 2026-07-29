@@ -28,7 +28,9 @@ import {
 import {
   searchPullRequests,
   highlightPullRequestMatches,
+  computePrStats,
   type PullRequestSearchResult,
+  type PrStats,
 } from "@/lib/pr-search";
 
 const PAGE_SIZE = 20;
@@ -138,6 +140,7 @@ export function PullRequestsPanel({
   ]);
 
   const results = useMemo(() => searchPullRequests(pulls, query), [pulls, query]);
+  const stats = useMemo(() => computePrStats(pulls), [pulls]);
 
   // Reset to page 1 whenever the result set changes shape (new search, more
   // results arriving from the background load).
@@ -154,6 +157,10 @@ export function PullRequestsPanel({
 
   return (
     <div className="space-y-4">
+      {pulls.length > 0 ? (
+        <PrStatsStrip stats={stats} loaded={pulls.length} exhausted={pullsExhausted} />
+      ) : null}
+
       <div>
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
@@ -226,7 +233,7 @@ export function PullRequestsPanel({
         </div>
       ) : null}
 
-      {results.length === 0 && pulls.length > 0 ? (
+      {!stillLoading && results.length === 0 && pulls.length > 0 ? (
         <div className="rounded-lg border border-border bg-card p-6 sm:p-8 text-center">
           <p className="text-sm text-muted-foreground">
             No pull requests match <span className="text-foreground font-mono">{query}</span>.
@@ -255,6 +262,59 @@ export function PullRequestsPanel({
           onSearch={() => void runDeepSearch()}
         />
       ) : null}
+    </div>
+  );
+}
+
+function formatDuration(hours: number): string {
+  if (hours < 1) return `${Math.max(1, Math.round(hours * 60))}m`;
+  if (hours < 48) return `${hours.toFixed(1)}h`;
+  return `${(hours / 24).toFixed(1)}d`;
+}
+
+function PrStatsStrip({
+  stats,
+  loaded,
+  exhausted,
+}: {
+  stats: PrStats;
+  loaded: number;
+  exhausted: boolean;
+}) {
+  return (
+    <div className="rounded-lg border border-border bg-card overflow-hidden">
+      <div className="border-b border-border px-5 py-3 flex items-center gap-2">
+        <span className="h-2 w-2 rounded-full bg-[color:var(--color-terminal-cyan)]" />
+        <span className="text-[11px] font-mono text-muted-foreground">
+          pr velocity{!exhausted ? ` — ${formatNumber(loaded)} loaded so far` : ""}
+        </span>
+      </div>
+      <div className="p-5 sm:p-6 grid grid-cols-2 sm:grid-cols-4 gap-x-6 gap-y-5">
+        <StatTile
+          label="Median time to merge"
+          value={stats.medianMergeHours !== null ? formatDuration(stats.medianMergeHours) : "—"}
+        />
+        <StatTile
+          label="Merge rate"
+          value={stats.mergeRatePct !== null ? `${stats.mergeRatePct.toFixed(0)}%` : "—"}
+        />
+        <StatTile label="Open now" value={formatNumber(stats.openCount)} />
+        <StatTile
+          label="Avg. age (open)"
+          value={stats.avgOpenAgeHours !== null ? formatDuration(stats.avgOpenAgeHours) : "—"}
+        />
+      </div>
+    </div>
+  );
+}
+
+function StatTile({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <div className="text-[10.5px] font-mono uppercase tracking-wider text-muted-foreground">
+        {label}
+      </div>
+      <div className="mt-1 text-xl font-semibold tracking-tight truncate">{value}</div>
     </div>
   );
 }

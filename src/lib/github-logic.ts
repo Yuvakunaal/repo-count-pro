@@ -89,6 +89,14 @@ export interface RepoMeta {
   default_branch: string;
   private: boolean;
   html_url: string;
+  description: string | null;
+  stargazers_count: number;
+  forks_count: number;
+  open_issues_count: number;
+  license: { name: string } | null;
+  topics: string[];
+  pushed_at: string;
+  homepage: string | null;
 }
 
 function authHeaders(token: string): HeadersInit {

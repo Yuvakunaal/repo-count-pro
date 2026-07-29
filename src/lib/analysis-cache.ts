@@ -1,6 +1,17 @@
 import { useCallback, useState } from "react";
 import type { CountResult, GitTreeEntry, PullRequestSummary } from "./github-logic";
 
+export interface RepoHealth {
+  description: string | null;
+  stars: number;
+  forks: number;
+  openIssues: number;
+  license: string | null;
+  topics: string[];
+  pushedAt: string;
+  homepage: string | null;
+}
+
 export interface AnalysisResult {
   fullName: string;
   owner: string;
@@ -10,6 +21,7 @@ export interface AnalysisResult {
   sha: string;
   truncated: boolean;
   counts: CountResult;
+  health: RepoHealth;
 }
 
 export type ResultTab = "files" | "prs";

@@ -242,3 +242,45 @@ export function searchPullRequests(
   // original newest-first relative order.
   return results.sort((a, b) => b.score - a.score);
 }
+
+export interface PrStats {
+  medianMergeHours: number | null;
+  mergeRatePct: number | null;
+  openCount: number;
+  avgOpenAgeHours: number | null;
+}
+
+function median(values: number[]): number | null {
+  if (values.length === 0) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
+}
+
+const hoursBetween = (a: string, b: string) =>
+  (new Date(b).getTime() - new Date(a).getTime()) / 3_600_000;
+
+// Every input here (created_at/merged_at/closed_at/state) is already on
+// PullRequestSummary — nothing extra to fetch. Recomputes on every call, so
+// it stays live as more pages arrive from the progressive PR load.
+export function computePrStats(pulls: PullRequestSummary[]): PrStats {
+  const mergeDurations = pulls
+    .filter((p) => p.merged && p.merged_at)
+    .map((p) => hoursBetween(p.created_at, p.merged_at as string));
+
+  const closedUnmerged = pulls.filter((p) => p.state === "closed" && !p.merged).length;
+  const mergedCount = mergeDurations.length;
+  const decidedCount = mergedCount + closedUnmerged;
+
+  const openPulls = pulls.filter((p) => p.state === "open");
+  const now = new Date().toISOString();
+  const openAges = openPulls.map((p) => hoursBetween(p.created_at, now));
+
+  return {
+    medianMergeHours: median(mergeDurations),
+    mergeRatePct: decidedCount > 0 ? (mergedCount / decidedCount) * 100 : null,
+    openCount: openPulls.length,
+    avgOpenAgeHours:
+      openAges.length > 0 ? openAges.reduce((a, b) => a + b, 0) / openAges.length : null,
+  };
+}

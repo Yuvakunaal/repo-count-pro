@@ -13,7 +13,15 @@ import {
   Gauge,
   Files,
   GitPullRequest,
+  HeartPulse,
+  Star,
+  GitFork,
+  CircleDot,
+  Scale,
+  Clock,
+  Tag,
 } from "lucide-react";
+import { formatDistanceToNowStrict } from "date-fns";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -30,6 +38,14 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PullRequestsPanel } from "@/components/pull-requests-panel";
@@ -450,6 +466,16 @@ function Analyzer({ token }: { token: string }) {
           sha,
           truncated: tree.truncated,
           counts,
+          health: {
+            description: meta.description,
+            stars: meta.stargazers_count,
+            forks: meta.forks_count,
+            openIssues: meta.open_issues_count,
+            license: meta.license?.name ?? null,
+            topics: meta.topics ?? [],
+            pushedAt: meta.pushed_at,
+            homepage: meta.homepage,
+          },
         });
         setStep("done");
       } catch (err) {
@@ -543,10 +569,15 @@ function Analyzer({ token }: { token: string }) {
       </form>
 
       {result && step === "done" ? (
-        <div>
-          <Button variant="ghost" size="sm" onClick={reset} className="h-9">
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="outline" size="sm" onClick={reset} className="h-9">
             <RotateCcw className="h-3.5 w-3.5 mr-1.5" /> Analyze another repository
           </Button>
+          <RepoHealthDialog
+            fullName={result.fullName}
+            htmlUrl={result.htmlUrl}
+            health={result.health}
+          />
         </div>
       ) : null}
 
@@ -577,6 +608,106 @@ function Analyzer({ token }: { token: string }) {
           </TabsContent>
         </Tabs>
       ) : null}
+    </div>
+  );
+}
+
+function RepoHealthDialog({
+  fullName,
+  htmlUrl,
+  health,
+}: {
+  fullName: string;
+  htmlUrl: string;
+  health: AnalysisResult["health"];
+}) {
+  return (
+    <Dialog>
+      <DialogTrigger asChild>
+        <Button variant="outline" size="sm" className="h-9">
+          <HeartPulse className="h-3.5 w-3.5 mr-1.5" /> Health card
+        </Button>
+      </DialogTrigger>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <HeartPulse className="h-4 w-4 text-[color:var(--color-terminal-cyan)]" />
+            Repository health
+          </DialogTitle>
+          <DialogDescription>
+            <a
+              href={htmlUrl}
+              target="_blank"
+              rel="noreferrer noopener"
+              className="hover:text-foreground inline-flex items-center gap-1"
+            >
+              {fullName} <ExternalLink className="h-3 w-3" />
+            </a>
+          </DialogDescription>
+        </DialogHeader>
+
+        {health.description ? (
+          <p className="text-sm text-muted-foreground leading-relaxed">{health.description}</p>
+        ) : null}
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <HealthStat icon={Star} label="Stars" value={formatNumber(health.stars)} />
+          <HealthStat icon={GitFork} label="Forks" value={formatNumber(health.forks)} />
+          <HealthStat
+            icon={CircleDot}
+            label="Open issues & PRs"
+            value={formatNumber(health.openIssues)}
+          />
+          <HealthStat icon={Scale} label="License" value={health.license ?? "None"} />
+        </div>
+
+        <div className="flex items-center gap-2 text-xs text-muted-foreground font-mono">
+          <Clock className="h-3.5 w-3.5 shrink-0" />
+          last pushed {formatDistanceToNowStrict(new Date(health.pushedAt))} ago
+        </div>
+
+        {health.topics.length > 0 ? (
+          <div>
+            <div className="flex items-center gap-1.5 text-[10.5px] font-mono uppercase tracking-wider text-muted-foreground mb-2">
+              <Tag className="h-3 w-3" /> Topics
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {health.topics.map((t) => (
+                <span
+                  key={t}
+                  className="px-2 py-0.5 rounded-full border border-border text-[11px] font-mono text-muted-foreground"
+                >
+                  {t}
+                </span>
+              ))}
+            </div>
+          </div>
+        ) : null}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function HealthStat({
+  icon: Icon,
+  label,
+  value,
+}: {
+  icon: React.ComponentType<{ className?: string }>;
+  label: string;
+  value: string;
+}) {
+  return (
+    <div className="rounded-lg border border-border bg-card px-4 py-3 min-w-0">
+      <div className="flex items-center gap-1.5 text-[10.5px] font-mono uppercase tracking-wider text-muted-foreground whitespace-nowrap">
+        <Icon className="h-3 w-3 shrink-0" /> <span>{label}</span>
+      </div>
+      <div
+        className="mt-1 text-base font-semibold tracking-tight leading-snug line-clamp-2 wrap-break-word"
+        title={value}
+      >
+        {value}
+      </div>
     </div>
   );
 }

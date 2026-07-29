@@ -13,9 +13,14 @@ Paste in any public repo, sign in with a GitHub token, and get a clean breakdown
 - **Handles large repositories** — flags when GitHub truncates very large trees so counts stay honest about what was actually measured.
 - **Copy as Markdown** — grab a shareable summary of the results in one click, ready to paste into a PR, README, or notes.
 
+## Repository health
+
+- **A quick health snapshot** — stars, forks, open issues & PRs, license, topics, and how recently the repo was pushed to, one click away from the results view. Pulled from the same request that kicks off analysis, so it costs nothing extra.
+
 ## Pull requests
 
 - **Every PR, not just the open ones** — loads the repository's full pull request history (open, closed, and merged) progressively in the background, with clean pagination once loaded.
+- **Velocity at a glance** — median time to merge, merge rate, how many PRs are open right now, and their average age — computed live from what's already loaded, updating as more comes in.
 - **Search as you type** — instant, local, zero-latency filtering across title, PR number, author, branch, labels, and description. No submit button, no waiting.
 - **GitHub-style qualifiers** — `is:open`, `is:merged`, `is:draft`, `author:name`, `label:name`, freely combinable with each other and with plain text (e.g. `is:open author:torvalds bug`).
 - **Finds matches in descriptions, not just titles** — including pasted multi-line code, normalized so formatting differences don't break the match. Shows a highlighted excerpt so you can see exactly why something matched.
@@ -33,7 +38,7 @@ Your GitHub token is used only to talk to GitHub's API directly from your device
 
 1. Sign in with a GitHub personal access token (read-only access to public repos is enough).
 2. Paste a repository as a URL, `owner/repo`, or a `github.com/owner/repo` link.
-3. Get an instant file breakdown, browse and search its pull requests, and check your API usage — all without leaving the tab.
+3. Get an instant file breakdown, check its health snapshot, browse and search its pull requests, and check your API usage — all without leaving the tab.
 
 ## Built with
 
