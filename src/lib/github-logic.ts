@@ -125,18 +125,28 @@ const LAST_HEADERS_KEY = "rfc.last_ratelimit_headers";
 // x-ratelimit-* headers reflecting the state as of that exact request. Recording
 // these lets /usage compare "what the real analyze calls reported" against a
 // standalone check, which is the most direct way to catch any discrepancy.
+//
+// GitHub tracks several *independent* rate-limit buckets (core: 5,000/hour,
+// search: 30/min signed-in, graphql, etc.) — a request against one says
+// nothing about the others. /usage exists to show the "core" budget that the
+// rest of this app actually spends (tree/PR fetches), so only core responses
+// update the tracked snapshot; anything else (e.g. the Search API used by
+// "search all PR history on GitHub") is deliberately ignored here rather
+// than clobbering /usage with a different bucket's much smaller numbers.
 function recordRateLimitHeaders(res: Response, url: string) {
   const limit = res.headers.get("x-ratelimit-limit");
   const remaining = res.headers.get("x-ratelimit-remaining");
   const reset = res.headers.get("x-ratelimit-reset");
+  const resource = res.headers.get("x-ratelimit-resource");
   if (limit === null || remaining === null || reset === null) return;
+  if (resource !== "core") return;
   const used = res.headers.get("x-ratelimit-used");
   const snapshot: RateLimitHeaderSnapshot = {
     limit: Number(limit),
     remaining: Number(remaining),
     used: used !== null ? Number(used) : Number(limit) - Number(remaining),
     reset: Number(reset),
-    resource: res.headers.get("x-ratelimit-resource"),
+    resource,
     status: res.status,
     url,
     seenAt: Date.now(),
@@ -218,6 +228,97 @@ export async function fetchRecursiveTree(
     `https://api.github.com/repos/${owner}/${repo}/git/trees/${sha}?recursive=1`,
     token,
   );
+}
+
+export interface PullRequestSummary {
+  number: number;
+  title: string;
+  body: string | null;
+  state: "open" | "closed";
+  merged: boolean;
+  draft: boolean;
+  user: { login: string; avatar_url: string } | null;
+  html_url: string;
+  created_at: string;
+  updated_at: string;
+  closed_at: string | null;
+  merged_at: string | null;
+  labels: { name: string; color: string }[];
+  head: { ref: string };
+  base: { ref: string };
+}
+
+const PULL_REQUESTS_PAGE_SIZE = 100;
+
+// GitHub's /pulls list doesn't expose a "merged" flag directly (only
+// /pulls/{number} does) — but a closed PR with merged_at set is merged, and
+// this holds for every item this endpoint returns.
+export async function fetchPullRequestsPage(
+  owner: string,
+  repo: string,
+  page: number,
+  token: string,
+): Promise<{ items: PullRequestSummary[]; hasMore: boolean }> {
+  const raw = await ghFetch<Omit<PullRequestSummary, "merged">[]>(
+    `https://api.github.com/repos/${owner}/${repo}/pulls?state=all&sort=created&direction=desc&per_page=${PULL_REQUESTS_PAGE_SIZE}&page=${page}`,
+    token,
+  );
+  const items = raw.map((pr) => ({ ...pr, merged: pr.state === "closed" && !!pr.merged_at }));
+  return { items, hasMore: items.length === PULL_REQUESTS_PAGE_SIZE };
+}
+
+// Local search only ever sees title + description, because that's all the
+// list endpoint returns — it can't see review/conversation comments (e.g. a
+// bot quoting a diff back in a review comment). Fetching comments for every
+// loaded PR to close that gap would mean 1-2 extra requests *per PR*, which
+// defeats the whole point of the progressive-load design on large repos.
+// GitHub's own search index already covers title + body + comments in one
+// request, so this hands off to that instead of trying to replicate it
+// locally — same qualifier syntax (is:/author:/label:) works here too.
+export async function searchPullRequestsOnGitHub(
+  owner: string,
+  repo: string,
+  query: string,
+  token: string,
+): Promise<{ items: PullRequestSummary[]; totalCount: number }> {
+  const q = encodeURIComponent(`repo:${owner}/${repo} is:pr ${query}`);
+  const data = await ghFetch<{
+    total_count: number;
+    items: Array<{
+      number: number;
+      title: string;
+      body: string | null;
+      state: "open" | "closed";
+      draft: boolean;
+      user: { login: string; avatar_url: string } | null;
+      html_url: string;
+      created_at: string;
+      updated_at: string;
+      closed_at: string | null;
+      labels: { name: string; color: string }[];
+      pull_request?: { merged_at: string | null };
+    }>;
+  }>(`https://api.github.com/search/issues?q=${q}&per_page=25`, token);
+
+  const items: PullRequestSummary[] = data.items.map((it) => ({
+    number: it.number,
+    title: it.title,
+    body: it.body,
+    state: it.state,
+    merged: !!it.pull_request?.merged_at,
+    draft: it.draft,
+    user: it.user,
+    html_url: it.html_url,
+    created_at: it.created_at,
+    updated_at: it.updated_at,
+    closed_at: it.closed_at,
+    merged_at: it.pull_request?.merged_at ?? null,
+    labels: it.labels,
+    head: { ref: "" },
+    base: { ref: "" },
+  }));
+
+  return { items, totalCount: data.total_count };
 }
 
 export interface CountOptions {

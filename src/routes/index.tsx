@@ -11,6 +11,8 @@ import {
   ExternalLink,
   ArrowRight,
   Gauge,
+  Files,
+  GitPullRequest,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -29,6 +31,8 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { PullRequestsPanel } from "@/components/pull-requests-panel";
 import { useGitHubAuth } from "@/lib/auth-store";
 import { useCachedAnalysisState, type AnalysisResult } from "@/lib/analysis-cache";
 import {
@@ -201,6 +205,7 @@ function Header({
               <HeaderIconTooltip label="Usage">
                 <Link
                   to="/usage"
+                  aria-label="Usage"
                   className="h-8 w-8 grid place-items-center rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
                 >
                   <Gauge className="h-4 w-4" />
@@ -216,7 +221,7 @@ function Header({
                       className="h-8 px-2 sm:px-3 text-xs text-muted-foreground hover:text-foreground"
                     >
                       <LogOut className="h-3.5 w-3.5 sm:mr-1.5" />
-                      <span className="hidden sm:inline">Log out</span>
+                      <span className="sr-only sm:not-sr-only">Log out</span>
                     </Button>
                   </AlertDialogTrigger>
                 </HeaderIconTooltip>
@@ -387,6 +392,9 @@ function Analyzer({ token }: { token: string }) {
     setIncludeDotfiles,
     configAsCode,
     setConfigAsCode,
+    activeTab,
+    setActiveTab,
+    resetPulls,
   } = useCachedAnalysisState();
   const [step, setStep] = useState<Step>(() => (result ? "done" : "idle"));
   const [error, setError] = useState<string | null>(null);
@@ -399,6 +407,8 @@ function Analyzer({ token }: { token: string }) {
       setError(null);
       setResult(null);
       setRawTree(null);
+      resetPulls();
+      setActiveTab("files");
 
       const parsed = parseRepoInput(input);
       if (!parsed) {
@@ -433,6 +443,8 @@ function Analyzer({ token }: { token: string }) {
         setRawTree(tree.tree);
         setResult({
           fullName: meta.full_name,
+          owner: parsed.owner,
+          repo: parsed.repo,
           htmlUrl: meta.html_url,
           branch,
           sha,
@@ -447,7 +459,18 @@ function Analyzer({ token }: { token: string }) {
         setStep("idle");
       }
     },
-    [input, includeDotfiles, configAsCode, token, setError, setResult, setRawTree, setStep],
+    [
+      input,
+      includeDotfiles,
+      configAsCode,
+      token,
+      setError,
+      setResult,
+      setRawTree,
+      setStep,
+      resetPulls,
+      setActiveTab,
+    ],
   );
 
   // The full tree is already cached from the initial fetch, so filtering after
@@ -469,6 +492,8 @@ function Analyzer({ token }: { token: string }) {
     setRawTree(null);
     setError(null);
     setStep("idle");
+    resetPulls();
+    setActiveTab("files");
   };
 
   return (
@@ -517,18 +542,40 @@ function Analyzer({ token }: { token: string }) {
         </div>
       </form>
 
+      {result && step === "done" ? (
+        <div>
+          <Button variant="ghost" size="sm" onClick={reset} className="h-9">
+            <RotateCcw className="h-3.5 w-3.5 mr-1.5" /> Analyze another repository
+          </Button>
+        </div>
+      ) : null}
+
       {error ? <ErrorPanel message={error} /> : null}
 
       {step !== "idle" && step !== "done" ? <LoadingState step={step} /> : null}
 
       {result && step === "done" ? (
-        <Results
-          result={result}
-          onReset={reset}
-          includeDotfiles={includeDotfiles}
-          configAsCode={configAsCode}
-          onFilterChange={applyFilters}
-        />
+        <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as "files" | "prs")}>
+          <TabsList>
+            <TabsTrigger value="files" className="gap-1.5">
+              <Files className="h-3.5 w-3.5" /> Files
+            </TabsTrigger>
+            <TabsTrigger value="prs" className="gap-1.5">
+              <GitPullRequest className="h-3.5 w-3.5" /> Pull Requests
+            </TabsTrigger>
+          </TabsList>
+          <TabsContent value="files" className="mt-6">
+            <Results
+              result={result}
+              includeDotfiles={includeDotfiles}
+              configAsCode={configAsCode}
+              onFilterChange={applyFilters}
+            />
+          </TabsContent>
+          <TabsContent value="prs" className="mt-6">
+            <PullRequestsPanel owner={result.owner} repo={result.repo} token={token} />
+          </TabsContent>
+        </Tabs>
       ) : null}
     </div>
   );
@@ -653,13 +700,11 @@ function ErrorPanel({ message }: { message: string }) {
 
 function Results({
   result,
-  onReset,
   includeDotfiles,
   configAsCode,
   onFilterChange,
 }: {
   result: AnalysisResult;
-  onReset: () => void;
   includeDotfiles: boolean;
   configAsCode: boolean;
   onFilterChange: (nextDot: boolean, nextCfg: boolean) => void;
@@ -717,9 +762,6 @@ function Results({
               <Copy className="h-3.5 w-3.5 mr-1.5" /> Copy as Markdown
             </>
           )}
-        </Button>
-        <Button variant="ghost" size="sm" onClick={onReset} className="h-9">
-          <RotateCcw className="h-3.5 w-3.5 mr-1.5" /> Analyze another repository
         </Button>
       </div>
 
