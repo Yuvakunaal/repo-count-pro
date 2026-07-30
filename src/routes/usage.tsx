@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { formatDistanceToNowStrict } from "date-fns";
+import { formatDistanceStrict } from "date-fns";
 import { ArrowLeft, Loader2, AlertTriangle } from "lucide-react";
 
 import { useGitHubAuth } from "@/lib/auth-store";
@@ -74,6 +74,14 @@ function UsageContent() {
 
   const usedPct = snapshot ? Math.min(100, (snapshot.used / snapshot.limit) * 100) : 0;
   const resetDate = snapshot ? new Date(snapshot.reset * 1000) : null;
+  // GitHub's reset timestamp is in GitHub's time, not the device's — if the
+  // local clock is off, comparing straight against it inflates or shrinks
+  // "resets in X" by however wrong that clock is. clockSkewMs (captured
+  // alongside the rate-limit headers, from GitHub's own Date response
+  // header) corrects for that, so this reads accurately even on a device
+  // with a wrong system clock.
+  const correctedNow =
+    snapshot?.clockSkewMs != null ? new Date(Date.now() - snapshot.clockSkewMs) : new Date();
 
   return (
     <div className="space-y-6">
@@ -133,7 +141,7 @@ function UsageContent() {
                 </span>
                 {resetDate ? (
                   <span title={resetDate.toLocaleString()}>
-                    resets in {formatDistanceToNowStrict(resetDate)}
+                    resets in {formatDistanceStrict(resetDate, correctedNow)}
                   </span>
                 ) : null}
               </div>

@@ -125,6 +125,15 @@ export interface RateLimitHeaderSnapshot {
   status: number;
   url: string;
   seenAt: number;
+  // How far the client's clock was from GitHub's (Date.now() minus GitHub's
+  // own Date response header, in ms) at the moment this snapshot was taken —
+  // positive means the client clock is ahead. GitHub's reset timestamp is in
+  // *GitHub's* time, so displaying "time until reset" against a skewed local
+  // clock can be off by however much that clock is wrong; this lets the
+  // display correct for it instead of trusting the device's clock outright.
+  // Null if the response didn't carry a Date header (shouldn't normally
+  // happen, but the display falls back to the uncorrected local clock).
+  clockSkewMs: number | null;
 }
 
 const LAST_HEADERS_KEY = "rfc.last_ratelimit_headers";
@@ -149,6 +158,9 @@ function recordRateLimitHeaders(res: Response, url: string) {
   if (limit === null || remaining === null || reset === null) return;
   if (resource !== "core") return;
   const used = res.headers.get("x-ratelimit-used");
+  const serverDate = res.headers.get("date");
+  const parsedServerDate = serverDate ? new Date(serverDate).getTime() : NaN;
+  const clockSkewMs = Number.isNaN(parsedServerDate) ? null : Date.now() - parsedServerDate;
   const snapshot: RateLimitHeaderSnapshot = {
     limit: Number(limit),
     remaining: Number(remaining),
@@ -158,6 +170,7 @@ function recordRateLimitHeaders(res: Response, url: string) {
     status: res.status,
     url,
     seenAt: Date.now(),
+    clockSkewMs,
   };
   if (typeof window !== "undefined") {
     try {

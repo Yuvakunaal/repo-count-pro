@@ -442,15 +442,26 @@ function Analyzer({ token }: { token: string }) {
       try {
         setStep("metadata");
         const meta = await fetchRepoMeta(parsed.owner, parsed.repo, token);
+        // A renamed/transferred repo (e.g. facebook/react -> react/react)
+        // 301s at this exact request, and fetch() follows that redirect
+        // transparently — meta.full_name is the *canonical* current name,
+        // which can differ from what was typed. REST calls below keep
+        // working either way (fetch keeps following the redirect), but
+        // GitHub's Search API takes owner/repo as plain query text with no
+        // redirect to follow — a repo: qualifier built from the old name
+        // 422s outright. Resolving to the canonical name once, here, is
+        // what makes every later call (PR list, PR search, deep search)
+        // work the same way GitHub's own UI does for a renamed repo.
+        const [canonicalOwner, canonicalRepo] = meta.full_name.split("/");
 
         setStep("branch");
         const branch = meta.default_branch;
 
         setStep("sha");
-        const sha = await fetchBranchSha(parsed.owner, parsed.repo, branch, token);
+        const sha = await fetchBranchSha(canonicalOwner, canonicalRepo, branch, token);
 
         setStep("tree");
-        const tree = await fetchRecursiveTree(parsed.owner, parsed.repo, sha, token);
+        const tree = await fetchRecursiveTree(canonicalOwner, canonicalRepo, sha, token);
 
         setStep("counting");
         const counts = countFiles(tree.tree, {
@@ -464,8 +475,8 @@ function Analyzer({ token }: { token: string }) {
         setRawTree(tree.tree);
         setResult({
           fullName: meta.full_name,
-          owner: parsed.owner,
-          repo: parsed.repo,
+          owner: canonicalOwner,
+          repo: canonicalRepo,
           htmlUrl: meta.html_url,
           branch,
           sha,
