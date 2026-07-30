@@ -73,6 +73,7 @@ export const Route = createRootRoute({
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
+      { name: "google-site-verification", content: "_Gyq5mirHsRjbJcyQty8rQ1xqVY6Uaa6aSCl6rUq2QI" },
       // No backend to enforce anything here, so the token (stored in
       // localStorage) is only as safe as the browser tab it lives in —
       // this is the structural backstop: even if a future change ever
