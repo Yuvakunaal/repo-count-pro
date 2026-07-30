@@ -107,12 +107,13 @@ export const Route = createRootRoute({
       {
         name: "description",
         content:
-          "Analyze any public GitHub repository and get a clean breakdown of code and non-code files, by extension, directly in your browser.",
+          "Analyze any public GitHub repository's file breakdown by extension, health signals, and pull request velocity — directly in your browser, no install or backend required.",
       },
       { property: "og:title", content: "Repository File Count" },
       {
         property: "og:description",
-        content: "A polished, browser-only file-count analyzer for GitHub repositories.",
+        content:
+          "File breakdown by extension, repository health, and pull request velocity for any public GitHub repo — browser-only, nothing installed.",
       },
       { property: "og:type", content: "website" },
       { property: "og:url", content: "https://repo-file-count.vercel.app/" },

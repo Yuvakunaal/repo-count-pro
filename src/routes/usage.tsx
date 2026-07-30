@@ -12,6 +12,20 @@ import {
 
 export const Route = createFileRoute("/usage")({
   component: UsagePage,
+  head: () => ({
+    links: [{ rel: "canonical", href: "https://repo-file-count.vercel.app/usage" }],
+    meta: [
+      { title: "API Usage — Repository File Count" },
+      {
+        name: "description",
+        content:
+          "See how much of your hourly GitHub API budget you've used, read straight from your own recent activity. Viewing this page never costs a request.",
+      },
+      { name: "robots", content: "noindex, follow" },
+      { property: "og:url", content: "https://repo-file-count.vercel.app/usage" },
+      { property: "og:title", content: "API Usage — Repository File Count" },
+    ],
+  }),
 });
 
 function UsagePage() {

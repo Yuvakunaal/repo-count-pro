@@ -12,10 +12,16 @@ export interface AuthState {
 }
 
 export function useGitHubAuth() {
+  // Starts as "signed out", not "loading": the server never has access to
+  // localStorage, so it can only ever render the signed-out view anyway.
+  // Starting the client at the same value keeps the first hydration pass
+  // identical to the SSR output (no mismatch) — real content ships in the
+  // initial HTML instead of a bare spinner. The effect below still swaps in
+  // an already-authenticated session right after mount.
   const [state, setState] = useState<AuthState>({
     token: null,
     user: null,
-    loading: true,
+    loading: false,
     error: null,
   });
 

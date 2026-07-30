@@ -20,6 +20,8 @@ import {
   Scale,
   Clock,
   Tag,
+  Search,
+  Lock,
 } from "lucide-react";
 import { formatDistanceToNowStrict } from "date-fns";
 
@@ -64,8 +66,70 @@ import {
   type ExtensionRow,
 } from "@/lib/github-logic";
 
+const FAQ_ITEMS: { question: string; answer: string }[] = [
+  {
+    question: "Do I need to clone the repository?",
+    answer:
+      "No — analysis happens entirely through GitHub's REST API, directly from your browser. Nothing is downloaded to your machine or a server, no matter how large the repo is.",
+  },
+  {
+    question: "What GitHub token permissions does this need?",
+    answer:
+      "A personal access token with read-only public_repo access is enough — create one at github.com/settings/tokens. It's stored only in this browser and used solely to talk to GitHub's own API.",
+  },
+  {
+    question: "How is pull request velocity calculated?",
+    answer:
+      "Open, merged, and closed-without-merge counts come straight from GitHub's Search API totals, not just whatever's loaded on screen. Median time-to-merge and average open-PR age come from a spread sample across the repository's history, so the numbers stay accurate even on repos with tens of thousands of PRs.",
+  },
+  {
+    question: "Does this work on renamed or transferred repositories?",
+    answer:
+      "Yes — if a repository has moved (for example, facebook/react is now react/react), the tool resolves GitHub's current canonical name automatically before running any analysis.",
+  },
+  {
+    question: "Is my token ever sent anywhere besides GitHub?",
+    answer:
+      "No. Every request goes straight from your browser to api.github.com under a strict content security policy that blocks the page from talking to anywhere else.",
+  },
+];
+
+// The installed router version's `head().meta` type only covers real <meta>
+// HTML attributes, but its runtime (headContentUtils.js, confirmed by reading
+// the shipped source) special-cases a "script:ld+json" key to render a JSON-LD
+// <script> tag — the .d.ts just hasn't caught up to that yet. This cast bridges
+// the gap for a feature that demonstrably works.
+function ldJsonMeta(json: Record<string, unknown>) {
+  return { "script:ld+json": json } as unknown as { title?: string };
+}
+
 export const Route = createFileRoute("/")({
   component: Index,
+  head: () => ({
+    links: [{ rel: "canonical", href: "https://repo-file-count.vercel.app/" }],
+    meta: [
+      ldJsonMeta({
+        "@context": "https://schema.org",
+        "@type": "SoftwareApplication",
+        name: "Repository File Count",
+        applicationCategory: "DeveloperApplication",
+        operatingSystem: "Web",
+        description:
+          "Analyze any public GitHub repository's file breakdown by extension, health signals, and pull request velocity — directly in your browser, no install or backend required.",
+        offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
+        url: "https://repo-file-count.vercel.app/",
+      }),
+      ldJsonMeta({
+        "@context": "https://schema.org",
+        "@type": "FAQPage",
+        mainEntity: FAQ_ITEMS.map((item) => ({
+          "@type": "Question",
+          name: item.question,
+          acceptedAnswer: { "@type": "Answer", text: item.answer },
+        })),
+      }),
+    ],
+  }),
 });
 
 type Step = "idle" | "metadata" | "branch" | "sha" | "tree" | "counting" | "preparing" | "done";
@@ -95,7 +159,11 @@ function Index() {
       <Header user={auth.user} onSignOut={auth.signOut} />
       <main className="flex-1 w-full max-w-5xl mx-auto px-5 sm:px-8 py-10 sm:py-16 pb-44 sm:pb-32">
         {!auth.token || !auth.user ? (
-          <SignInPanel onSignIn={auth.signIn} error={auth.error} />
+          <>
+            <SignInPanel onSignIn={auth.signIn} error={auth.error} />
+            <FeatureOverview />
+            <Faq />
+          </>
         ) : (
           <Analyzer token={auth.token} />
         )}
@@ -393,6 +461,77 @@ function SignInPanel({
         </Button>
       </form>
     </div>
+  );
+}
+
+/* ---------- Feature overview / FAQ (shown signed-out, alongside the sign-in form) ---------- */
+
+const FEATURES = [
+  {
+    icon: Files,
+    title: "File breakdown by extension",
+    body: "Walks a repository's entire Git tree and counts every file — split by code vs. non-code and by extension (.ts, .py, .go, .md, whatever's actually in there).",
+  },
+  {
+    icon: HeartPulse,
+    title: "Repository health, one click away",
+    body: "Stars, forks, open issues & PRs, license, topics, and how recently it was pushed to — pulled from the same request that starts analysis, so it costs nothing extra.",
+  },
+  {
+    icon: GitPullRequest,
+    title: "Pull request velocity",
+    body: "Exact open/merged/closed counts straight from GitHub's own totals, plus median time-to-merge and average age of open PRs from an unbiased sample — accurate on repos with tens of thousands of PRs.",
+  },
+  {
+    icon: Search,
+    title: "Search that keeps up as you type",
+    body: "Instant, local filtering across title, author, branch, labels, and description, with GitHub-style qualifiers like is:open and author:name. Deep search hands off to GitHub's own index when you need to reach comments too.",
+  },
+  {
+    icon: Lock,
+    title: "Runs entirely in your browser",
+    body: "No backend, no signup beyond your own GitHub token, no data stored anywhere but this tab.",
+  },
+] as const;
+
+function FeatureOverview() {
+  return (
+    <section className="max-w-3xl mx-auto mt-16">
+      <h2 className="text-xl font-semibold tracking-tight text-center">What it does</h2>
+      <p className="mt-2 text-sm text-muted-foreground text-center max-w-lg mx-auto">
+        Paste any public GitHub repository and get a clean breakdown of how it's built — no cloning,
+        no local setup, nothing to install.
+      </p>
+      <div className="mt-8 grid grid-cols-1 sm:grid-cols-2 gap-4">
+        {FEATURES.map(({ icon: Icon, title, body }) => (
+          <div key={title} className="rounded-lg border border-border bg-card p-5 space-y-2">
+            <div className="flex items-center gap-2">
+              <Icon className="h-4 w-4 text-muted-foreground shrink-0" />
+              <h3 className="text-sm font-medium">{title}</h3>
+            </div>
+            <p className="text-xs text-muted-foreground leading-relaxed">{body}</p>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function Faq() {
+  return (
+    <section className="max-w-3xl mx-auto mt-16">
+      <h2 className="text-xl font-semibold tracking-tight text-center">
+        Frequently asked questions
+      </h2>
+      <div className="mt-8 space-y-5">
+        {FAQ_ITEMS.map((item) => (
+          <div key={item.question}>
+            <h3 className="text-sm font-medium">{item.question}</h3>
+            <p className="mt-1 text-xs text-muted-foreground leading-relaxed">{item.answer}</p>
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }
 
