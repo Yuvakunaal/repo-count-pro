@@ -1,8 +1,7 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   Outlet,
   Link,
-  createRootRouteWithContext,
+  createRootRoute,
   useRouter,
   HeadContent,
   Scripts,
@@ -69,11 +68,41 @@ function ErrorComponent({ error, reset }: { error: Error; reset: () => void }) {
   );
 }
 
-export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()({
+export const Route = createRootRoute({
   head: () => ({
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
+      // No backend to enforce anything here, so the token (stored in
+      // localStorage) is only as safe as the browser tab it lives in —
+      // this is the structural backstop: even if a future change ever
+      // renders untrusted content unsafely, connect-src limits where a
+      // compromised page could send data. (frame-ancestors and other
+      // header-only directives can't be set via meta — see public/_headers
+      // for those, when the hosting platform honors it.)
+      //
+      // script-src needs 'unsafe-inline': TanStack Start SSR-hydrates via
+      // its own inline <script> bootstrap tag (window.$_TSR) with a
+      // different hash on every request — verified live that omitting
+      // 'unsafe-inline' blocks that script outright and breaks hydration
+      // completely, not just a theoretical hardening gap. A per-request
+      // nonce would remove the need for it, but requires the server to
+      // generate and thread a nonce through to that framework-internal
+      // script tag, which isn't something this app controls today.
+      // connect-src — the directive that actually matters for this app's
+      // token — stays fully locked down regardless.
+      {
+        httpEquiv: "Content-Security-Policy",
+        content:
+          "default-src 'self'; " +
+          "script-src 'self' 'unsafe-inline' https://va.vercel-scripts.com; " +
+          "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
+          "font-src 'self' https://fonts.gstatic.com; " +
+          "img-src 'self' data: https://avatars.githubusercontent.com; " +
+          "connect-src 'self' https://api.github.com; " +
+          "base-uri 'self'; " +
+          "form-action 'self'",
+      },
       { title: "Repository File Count — Analyze any GitHub repo" },
       {
         name: "description",
@@ -141,12 +170,6 @@ function RootShell({ children }: { children: ReactNode }) {
 }
 
 function RootComponent() {
-  const { queryClient } = Route.useRouteContext();
-
-  return (
-    <QueryClientProvider client={queryClient}>
-      {/* Required: nested routes render here. Removing <Outlet /> breaks all child routes. */}
-      <Outlet />
-    </QueryClientProvider>
-  );
+  // Required: nested routes render here. Removing <Outlet /> breaks all child routes.
+  return <Outlet />;
 }

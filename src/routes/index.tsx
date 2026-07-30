@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Github,
   LogOut,
@@ -137,6 +137,11 @@ function useLongPress(onLongPress: () => void, ms = 500) {
     },
     [cancel],
   );
+
+  // A touch that starts and is never released (e.g. the component unmounts
+  // mid-press) would otherwise leave the timer running and fire onLongPress
+  // against an unmounted component.
+  useEffect(() => cancel, [cancel]);
 
   return { onTouchStart: start, onTouchEnd: end, onTouchMove: cancel, onTouchCancel: cancel };
 }

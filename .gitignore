@@ -20,6 +20,13 @@ dist-ssr
 .wrangler/
 .dev.vars
 
+# Env files — none in use today, but ignored preemptively so one is never
+# accidentally committed later. *.local above already catches .env.local
+# and similar; this just adds the bare .env case. Deliberately not a
+# broader .env.* pattern, which would also swallow a legitimate committed
+# .env.example template.
+.env
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

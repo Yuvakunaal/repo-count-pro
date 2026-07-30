@@ -199,6 +199,23 @@ async function ghFetch<T>(url: string, token: string): Promise<T> {
   }
   if (res.status === 404)
     throw new GitHubError("Repository not found. Check the URL and try again.", 404);
+  // 429 is GitHub's *secondary* rate limit (too many requests too quickly,
+  // separate from the primary hourly quota already handled above via 403) —
+  // it carries a Retry-After header telling us exactly how long to wait, so
+  // surface that instead of a bare status code.
+  if (res.status === 429) {
+    const retryAfter = res.headers.get("retry-after");
+    const wait = retryAfter ? ` Try again in ${retryAfter}s.` : " Try again in a moment.";
+    throw new GitHubError(`GitHub is briefly rate-limiting these requests.${wait}`, 429);
+  }
+  // 422 is a validation error — GitHub rejected the request itself (e.g. a
+  // search query over its length limit, reachable here by pasting a very
+  // long snippet into search). The response body's message says why.
+  if (res.status === 422) {
+    const body = (await res.json().catch(() => null)) as { message?: string } | null;
+    const detail = body?.message ? `: ${body.message}` : ".";
+    throw new GitHubError(`GitHub couldn't process that request${detail}`, 422);
+  }
   if (!res.ok) throw new GitHubError(`GitHub request failed (${res.status}).`, res.status);
   return (await res.json()) as T;
 }
@@ -327,6 +344,135 @@ export async function searchPullRequestsOnGitHub(
   }));
 
   return { items, totalCount: data.total_count };
+}
+
+export interface PrCounts {
+  openCount: number;
+  mergedCount: number;
+  closedUnmergedCount: number;
+}
+
+// Search's total_count is computed server-side across the repo's *entire*
+// history and returned even with per_page=1 — exact and instant, unlike
+// paginating every PR locally just to count them. Three lightweight calls,
+// no PR bodies fetched, so this stays cheap even for repos with thousands
+// of PRs, and the numbers never shift as more pages load elsewhere.
+//
+// Note: `is:unmerged` alone also matches *open* PRs (they're not merged
+// yet either) — confirmed against a live repo where is:open + is:merged +
+// is:unmerged overcounted the true total by exactly the open count. The
+// correct query for "closed but never merged" is is:closed+is:unmerged
+// together.
+export async function fetchPrCounts(owner: string, repo: string, token: string): Promise<PrCounts> {
+  const buildQuery = (extra: string) => encodeURIComponent(`repo:${owner}/${repo} is:pr ${extra}`);
+  const search = (extra: string) =>
+    ghFetch<{ total_count: number }>(
+      `https://api.github.com/search/issues?q=${buildQuery(extra)}&per_page=1`,
+      token,
+    );
+
+  const [open, merged, closedUnmerged] = await Promise.all([
+    search("is:open"),
+    search("is:merged"),
+    search("is:closed is:unmerged"),
+  ]);
+
+  return {
+    openCount: open.total_count,
+    mergedCount: merged.total_count,
+    closedUnmergedCount: closedUnmerged.total_count,
+  };
+}
+
+const OPEN_AGE_MAX_SAMPLE_PAGES = 5;
+
+// Evenly spread page numbers across [1, totalPages], including both ends.
+function pickSamplePages(totalPages: number, max: number): number[] {
+  if (totalPages <= max) return Array.from({ length: totalPages }, (_, i) => i + 1);
+  const pages = new Set<number>();
+  for (let i = 0; i < max; i++) {
+    pages.add(Math.round(1 + (i * (totalPages - 1)) / (max - 1)));
+  }
+  return [...pages].sort((a, b) => a - b);
+}
+
+export interface OpenAgeSample {
+  createdAts: string[];
+  exact: boolean;
+}
+
+// Sampling only the most-recently-*created* open PRs makes old, neglected
+// ones structurally invisible — confirmed against microsoft/vscode, whose
+// oldest open PR is 10+ years old and could never appear in a "100 most
+// recent" window no matter how it's computed. Correctness here means
+// spanning the *entire* open backlog, not just its newest slice. With the
+// exact open count already known (fetchPrCounts), this fetches every open
+// PR if they all fit on one page, or a small, fixed number of pages spread
+// evenly from newest to oldest otherwise — capped so cost never grows
+// unbounded on repos with thousands of open PRs.
+export async function fetchOpenAgeSample(
+  owner: string,
+  repo: string,
+  token: string,
+  openCount: number,
+): Promise<OpenAgeSample> {
+  if (openCount === 0) return { createdAts: [], exact: true };
+
+  const totalPages = Math.ceil(openCount / PULL_REQUESTS_PAGE_SIZE);
+  const pages = pickSamplePages(totalPages, OPEN_AGE_MAX_SAMPLE_PAGES);
+
+  const pageResults = await Promise.all(
+    pages.map((page) =>
+      ghFetch<{ created_at: string }[]>(
+        `https://api.github.com/repos/${owner}/${repo}/pulls?state=open&sort=created&direction=desc&per_page=${PULL_REQUESTS_PAGE_SIZE}&page=${page}`,
+        token,
+      ),
+    ),
+  );
+
+  return {
+    createdAts: pageResults.flat().map((pr) => pr.created_at),
+    exact: totalPages <= OPEN_AGE_MAX_SAMPLE_PAGES,
+  };
+}
+
+export interface MergeDurationPair {
+  createdAt: string;
+  mergedAt: string;
+}
+
+// Deliberately recency-biased, unlike the open-age sample above — "how
+// fast is this project merging right now" is a coherent thing to measure
+// from recent activity, whereas open-PR age needs the true population
+// average. sort=updated (not created) so the sample is dominated by PRs
+// that *just* merged, rather than ones that merely happen to be recently
+// opened and haven't had time to merge yet (which would bias the sample
+// toward faster-than-typical merges).
+//
+// GitHub has no "sort by merged date" option, so sort=updated is the best
+// available proxy — but updated_at also bumps on comments/labels added
+// long *after* merge, which would let a stale merge masquerade as recent
+// activity. Filtering to PRs whose updated_at lands within minutes of
+// merged_at keeps only PRs whose most recent update *was* the merge
+// itself, excluding old merges resurfaced by unrelated later activity.
+const MERGE_UPDATE_SKEW_MS = 5 * 60 * 1000;
+
+export async function fetchRecentMergedSample(
+  owner: string,
+  repo: string,
+  token: string,
+): Promise<MergeDurationPair[]> {
+  const raw = await ghFetch<{ created_at: string; updated_at: string; merged_at: string | null }[]>(
+    `https://api.github.com/repos/${owner}/${repo}/pulls?state=closed&sort=updated&direction=desc&per_page=${PULL_REQUESTS_PAGE_SIZE}`,
+    token,
+  );
+  return raw
+    .filter((pr): pr is { created_at: string; updated_at: string; merged_at: string } => {
+      if (!pr.merged_at) return false;
+      const skewMs = Math.abs(new Date(pr.updated_at).getTime() - new Date(pr.merged_at).getTime());
+      return skewMs <= MERGE_UPDATE_SKEW_MS;
+    })
+    .map((pr) => ({ createdAt: pr.created_at, mergedAt: pr.merged_at }));
 }
 
 export interface CountOptions {

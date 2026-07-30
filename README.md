@@ -20,7 +20,7 @@ Paste in any public repo, sign in with a GitHub token, and get a clean breakdown
 ## Pull requests
 
 - **Every PR, not just the open ones** — loads the repository's full pull request history (open, closed, and merged) progressively in the background, with clean pagination once loaded.
-- **Velocity at a glance** — median time to merge, merge rate, how many PRs are open right now, and their average age — computed live from what's already loaded, updating as more comes in.
+- **Velocity at a glance** — how many PRs are open right now and the overall merge rate, both exact and instant, straight from GitHub's own totals rather than whatever's loaded so far. Median time to merge and average age of open PRs come from a smart sample, so the numbers land fast and hold steady instead of drifting as more history loads in — even on repos with tens of thousands of PRs.
 - **Search as you type** — instant, local, zero-latency filtering across title, PR number, author, branch, labels, and description. No submit button, no waiting.
 - **GitHub-style qualifiers** — `is:open`, `is:merged`, `is:draft`, `author:name`, `label:name`, freely combinable with each other and with plain text (e.g. `is:open author:torvalds bug`).
 - **Finds matches in descriptions, not just titles** — including pasted multi-line code, normalized so formatting differences don't break the match. Shows a highlighted excerpt so you can see exactly why something matched.
@@ -32,7 +32,7 @@ A dedicated page shows how much of your hourly GitHub API budget you've used, so
 
 ## Privacy
 
-Your GitHub token is used only to talk to GitHub's API directly from your device. It's never sent anywhere else or stored on a server.
+Your GitHub token is used only to talk to GitHub's API directly from your device. It's never sent anywhere else or stored on a server, and the app runs behind a strict content security policy that limits what it's even allowed to talk to.
 
 ## How it works
 

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Search,
   X,
@@ -20,20 +20,72 @@ import { Input } from "@/components/ui/input";
 import { useCachedAnalysisState } from "@/lib/analysis-cache";
 import {
   fetchPullRequestsPage,
+  fetchPrCounts,
+  fetchOpenAgeSample,
+  fetchRecentMergedSample,
   formatNumber,
   searchPullRequestsOnGitHub,
   GitHubError,
   type PullRequestSummary,
+  type PrCounts,
 } from "@/lib/github-logic";
 import {
   searchPullRequests,
   highlightPullRequestMatches,
-  computePrStats,
+  computeAvgAgeHours,
+  computeMedianMergeHours,
   type PullRequestSearchResult,
-  type PrStats,
 } from "@/lib/pr-search";
 
 const PAGE_SIZE = 20;
+
+// Shared shape behind prCounts / medianMergeResult / avgOpenAgeResult below:
+// fetch once, cache the result, skip while `ready` is false (avgOpenAge
+// needs prCounts to resolve first), guard against a response landing after
+// unmount/retry, and expose a loading flag. Deliberately not used for the
+// pulls list above — that one accumulates pages rather than settling into a
+// single result, so it doesn't fit this shape.
+function useFetchOnce<T>(
+  result: T | null,
+  setResult: (v: T) => void,
+  setError: (v: string | null) => void,
+  ready: boolean,
+  retryTick: number,
+  fetchFn: () => Promise<T>,
+  errorFallback: string,
+): boolean {
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (result || !ready) return;
+    let cancelled = false;
+
+    (async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const value = await fetchFn();
+        if (cancelled) return;
+        setResult(value);
+      } catch (err) {
+        if (!cancelled) setError(err instanceof GitHubError ? err.message : errorFallback);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+    // fetchFn is a fresh closure every render by design (it closes over
+    // owner/repo/token/prCounts) — including it here would refetch on every
+    // render. `result` going back to null (a new repo) is what actually
+    // needs to retrigger this, and that's already covered.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [result, ready, retryTick]);
+
+  return loading;
+}
 
 export function PullRequestsPanel({
   owner,
@@ -53,9 +105,28 @@ export function PullRequestsPanel({
     setPullsExhausted,
     pullsError,
     setPullsError,
+    prCounts,
+    setPrCounts,
+    prCountsError,
+    setPrCountsError,
+    medianMergeResult,
+    setMedianMergeResult,
+    medianMergeError,
+    setMedianMergeError,
+    avgOpenAgeResult,
+    setAvgOpenAgeResult,
+    avgOpenAgeError,
+    setAvgOpenAgeError,
   } = useCachedAnalysisState();
 
-  const [retryTick, setRetryTick] = useState(0);
+  // Separate retry counters per concern — the pulls list, and the three
+  // independent stats fetches (grouped, since they're presented as one
+  // card with one retry button). Kept apart so retrying one never cancels
+  // an unrelated, healthy in-flight request from the other (e.g. clicking
+  // "retry stats" used to also cancel-and-restart an in-progress pulls
+  // page fetch, wasting an API call for a retry nobody asked for).
+  const [pullsRetryTick, setPullsRetryTick] = useState(0);
+  const [statsRetryTick, setStatsRetryTick] = useState(0);
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
 
@@ -68,31 +139,46 @@ export function PullRequestsPanel({
   const [deepError, setDeepError] = useState<string | null>(null);
   const [deepResults, setDeepResults] = useState<PullRequestSummary[] | null>(null);
   const [deepTotalCount, setDeepTotalCount] = useState<number | null>(null);
+  // Bumped every time the query changes; a deep search captures the epoch it
+  // was fired under and checks it again on resolution. Without this, a slow
+  // response for an old query could land *after* the user has already typed
+  // something else, silently repopulating the section with results that no
+  // longer match what's in the search box.
+  const deepSearchEpoch = useRef(0);
 
   const runDeepSearch = async () => {
     const q = query.trim();
     if (!q) return;
+    const epoch = deepSearchEpoch.current;
     setDeepLoading(true);
     setDeepError(null);
     try {
       const { items, totalCount } = await searchPullRequestsOnGitHub(owner, repo, q, token);
+      if (deepSearchEpoch.current !== epoch) return;
       setDeepResults(items);
       setDeepTotalCount(totalCount);
       setDeepQuery(q);
     } catch (err) {
+      if (deepSearchEpoch.current !== epoch) return;
       setDeepError(err instanceof GitHubError ? err.message : "Failed to search GitHub.");
     } finally {
-      setDeepLoading(false);
+      if (deepSearchEpoch.current === epoch) setDeepLoading(false);
     }
   };
 
   // A changed query invalidates any previous deep-search results — they're
-  // no longer an answer to what's currently in the box.
+  // no longer an answer to what's currently in the box. Also clears
+  // deepLoading: a request already in flight for the old query has its
+  // epoch bumped out from under it, so its own `finally` block will
+  // correctly skip touching this state when it lands — nothing else would
+  // otherwise flip it back off, leaving the button stuck disabled.
   useEffect(() => {
+    deepSearchEpoch.current += 1;
     setDeepResults(null);
     setDeepTotalCount(null);
     setDeepError(null);
     setDeepQuery(null);
+    setDeepLoading(false);
   }, [query]);
 
   const deepSearchResults = useMemo(
@@ -132,15 +218,64 @@ export function PullRequestsPanel({
     token,
     pullsPagesLoaded,
     pullsExhausted,
-    retryTick,
+    pullsRetryTick,
     setPulls,
     setPullsPagesLoaded,
     setPullsExhausted,
     setPullsError,
   ]);
 
+  // Exact open/merged/closed counts, fetched once per repo — see
+  // fetchPrCounts for why this beats deriving them from the progressively
+  // loaded pulls list (those numbers would keep shifting as more pages
+  // arrive; these are final the moment they land).
+  const prCountsLoading = useFetchOnce(
+    prCounts,
+    setPrCounts,
+    setPrCountsError,
+    true,
+    statsRetryTick,
+    () => fetchPrCounts(owner, repo, token),
+    "Failed to load PR counts.",
+  );
+
+  // Median merge time — a dedicated sample of actually-merged PRs (see
+  // fetchRecentMergedSample), independent of the pulls list used for
+  // browsing/search.
+  const medianMergeLoading = useFetchOnce(
+    medianMergeResult,
+    setMedianMergeResult,
+    setMedianMergeError,
+    true,
+    statsRetryTick,
+    async () => ({
+      hours: computeMedianMergeHours(await fetchRecentMergedSample(owner, repo, token)),
+    }),
+    "Failed to load merge times.",
+  );
+
+  // Average open-PR age — needs the exact open count from prCounts first,
+  // to decide whether every open PR fits in one page or a spread sample
+  // across the full backlog is needed (see fetchOpenAgeSample). `ready`
+  // being true guarantees prCounts is non-null at the point fetchFn runs.
+  const avgOpenAgeLoading = useFetchOnce(
+    avgOpenAgeResult,
+    setAvgOpenAgeResult,
+    setAvgOpenAgeError,
+    prCounts !== null,
+    statsRetryTick,
+    async () => {
+      const sample = await fetchOpenAgeSample(owner, repo, token, prCounts!.openCount);
+      return { hours: computeAvgAgeHours(sample.createdAts), exact: sample.exact };
+    },
+    "Failed to load open PR ages.",
+  );
+
   const results = useMemo(() => searchPullRequests(pulls, query), [pulls, query]);
-  const stats = useMemo(() => computePrStats(pulls), [pulls]);
+
+  const totalPrCount = prCounts
+    ? prCounts.openCount + prCounts.mergedCount + prCounts.closedUnmergedCount
+    : null;
 
   // Reset to page 1 whenever the result set changes shape (new search, more
   // results arriving from the background load).
@@ -155,10 +290,32 @@ export function PullRequestsPanel({
   const stillLoading = !pullsExhausted;
   const searching = query.trim().length > 0;
 
+  // Wait for prCounts to actually resolve before deciding whether to show
+  // the card at all — deciding early (while it's still null) meant a
+  // zero-PR repo would flash the card with spinners and then have it
+  // vanish once the real, all-zero count landed. Still show it on error so
+  // the retry affordance is reachable. This also guarantees prCounts is
+  // always settled (resolved or errored) by the time the card renders at
+  // all, so the open-age tile's own loading flag never needs to account
+  // for "still waiting on prCounts" separately — that window is never
+  // visible to begin with.
+  const showStatsStrip = prCountsError !== null || (totalPrCount !== null && totalPrCount > 0);
+
   return (
     <div className="space-y-4">
-      {pulls.length > 0 ? (
-        <PrStatsStrip stats={stats} loaded={pulls.length} exhausted={pullsExhausted} />
+      {showStatsStrip ? (
+        <PrStatsStrip
+          prCounts={prCounts}
+          prCountsLoading={prCountsLoading}
+          prCountsError={prCountsError}
+          medianMergeResult={medianMergeResult}
+          medianMergeLoading={medianMergeLoading}
+          medianMergeError={medianMergeError}
+          avgOpenAgeResult={avgOpenAgeResult}
+          avgOpenAgeLoading={avgOpenAgeLoading}
+          avgOpenAgeError={avgOpenAgeError}
+          onRetry={() => setStatsRetryTick((t) => t + 1)}
+        />
       ) : null}
 
       <div>
@@ -209,7 +366,7 @@ export function PullRequestsPanel({
             variant="outline"
             size="sm"
             className="h-7 text-xs shrink-0"
-            onClick={() => setRetryTick((t) => t + 1)}
+            onClick={() => setPullsRetryTick((t) => t + 1)}
           >
             Retry
           </Button>
@@ -273,48 +430,97 @@ function formatDuration(hours: number): string {
 }
 
 function PrStatsStrip({
-  stats,
-  loaded,
-  exhausted,
+  prCounts,
+  prCountsLoading,
+  prCountsError,
+  medianMergeResult,
+  medianMergeLoading,
+  medianMergeError,
+  avgOpenAgeResult,
+  avgOpenAgeLoading,
+  avgOpenAgeError,
+  onRetry,
 }: {
-  stats: PrStats;
-  loaded: number;
-  exhausted: boolean;
+  prCounts: PrCounts | null;
+  prCountsLoading: boolean;
+  prCountsError: string | null;
+  medianMergeResult: { hours: number | null } | null;
+  medianMergeLoading: boolean;
+  medianMergeError: string | null;
+  avgOpenAgeResult: { hours: number | null; exact: boolean } | null;
+  avgOpenAgeLoading: boolean;
+  avgOpenAgeError: string | null;
+  onRetry: () => void;
 }) {
+  // Merge rate is exact and all-time, derived from the same search counts
+  // as "open now" — not from whatever's progressively loaded.
+  const decidedCount = prCounts ? prCounts.mergedCount + prCounts.closedUnmergedCount : 0;
+  const mergeRatePct =
+    prCounts && decidedCount > 0 ? (prCounts.mergedCount / decidedCount) * 100 : null;
+
+  const anyError = prCountsError ?? medianMergeError ?? avgOpenAgeError;
+
   return (
     <div className="rounded-lg border border-border bg-card overflow-hidden">
-      <div className="border-b border-border px-5 py-3 flex items-center gap-2">
-        <span className="h-2 w-2 rounded-full bg-[color:var(--color-terminal-cyan)]" />
-        <span className="text-[11px] font-mono text-muted-foreground">
-          pr velocity{!exhausted ? ` — ${formatNumber(loaded)} loaded so far` : ""}
-        </span>
+      <div className="border-b border-border px-5 py-3 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <span className="h-2 w-2 rounded-full bg-[color:var(--color-terminal-cyan)]" />
+          <span className="text-[11px] font-mono text-muted-foreground">pr velocity</span>
+        </div>
+        {anyError ? (
+          <button
+            type="button"
+            onClick={onRetry}
+            className="text-[11px] font-mono text-destructive hover:underline"
+          >
+            couldn't load some stats — retry
+          </button>
+        ) : null}
       </div>
       <div className="p-5 sm:p-6 grid grid-cols-2 sm:grid-cols-4 gap-x-6 gap-y-5">
         <StatTile
-          label="Median time to merge"
-          value={stats.medianMergeHours !== null ? formatDuration(stats.medianMergeHours) : "—"}
+          label="Open now"
+          loading={prCountsLoading}
+          value={prCounts ? formatNumber(prCounts.openCount) : "—"}
         />
         <StatTile
           label="Merge rate"
-          value={stats.mergeRatePct !== null ? `${stats.mergeRatePct.toFixed(0)}%` : "—"}
+          loading={prCountsLoading}
+          value={mergeRatePct !== null ? `${mergeRatePct.toFixed(0)}%` : "—"}
         />
-        <StatTile label="Open now" value={formatNumber(stats.openCount)} />
+        <StatTile
+          label="Median time to merge"
+          loading={medianMergeLoading}
+          value={medianMergeResult?.hours != null ? formatDuration(medianMergeResult.hours) : "—"}
+        />
         <StatTile
           label="Avg. age (open)"
-          value={stats.avgOpenAgeHours !== null ? formatDuration(stats.avgOpenAgeHours) : "—"}
+          loading={avgOpenAgeLoading}
+          value={avgOpenAgeResult?.hours != null ? formatDuration(avgOpenAgeResult.hours) : "—"}
         />
+      </div>
+      <div className="px-5 pb-4 sm:px-6 -mt-2 space-y-0.5 text-[10.5px] font-mono text-muted-foreground">
+        <div>median merge time reflects the most recently merged PRs</div>
+        {avgOpenAgeResult && !avgOpenAgeResult.exact && prCounts ? (
+          <div>
+            avg. open age is estimated from a spread sample across all{" "}
+            {formatNumber(prCounts.openCount)} open PRs
+          </div>
+        ) : null}
       </div>
     </div>
   );
 }
 
-function StatTile({ label, value }: { label: string; value: string }) {
+function StatTile({ label, value, loading }: { label: string; value: string; loading?: boolean }) {
   return (
     <div>
       <div className="text-[10.5px] font-mono uppercase tracking-wider text-muted-foreground">
         {label}
       </div>
-      <div className="mt-1 text-xl font-semibold tracking-tight truncate">{value}</div>
+      <div className="mt-1.5 text-xl font-semibold tracking-tight truncate">
+        {loading ? <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" /> : value}
+      </div>
     </div>
   );
 }
@@ -339,6 +545,9 @@ function DeepSearchSection({
           <Telescope className="h-3 w-3 inline -mt-0.5 mr-1" />
           found {formatNumber(totalCount ?? results.length)} in GitHub's full search (title,
           description, and comments)
+          {totalCount !== null && totalCount > results.length
+            ? ` — showing the top ${formatNumber(results.length)}`
+            : ""}
         </p>
         {results.length === 0 ? (
           <div className="rounded-lg border border-border bg-card p-6 sm:p-8 text-center">

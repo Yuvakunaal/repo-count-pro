@@ -3,7 +3,7 @@
 // author:name, label:name) plus fuzzy free-text matching across the title,
 // description, PR number, author, branch names, and labels, ranked by match
 // quality.
-import type { PullRequestSummary } from "./github-logic";
+import type { PullRequestSummary, MergeDurationPair } from "./github-logic";
 
 export interface BodySnippet {
   text: string;
@@ -50,14 +50,27 @@ function parseQuery(query: string): ParsedQuery {
     if (m) {
       const key = m[1].toLowerCase();
       const value = m[2].replace(/^"|"$/g, "").toLowerCase();
-      if (key === "is" && (STATE_QUALIFIERS as string[]).includes(value)) {
-        is.push(value as StateQualifier);
+      // Only consume the token as a qualifier once it actually validates —
+      // "is:" has a fixed, known vocabulary to check against, so an
+      // is:-shaped token with an unrecognized value (e.g. pasted
+      // TypeScript "x is Foo") is almost certainly literal text, not a
+      // filter attempt, and falls through to be searched as-is instead of
+      // silently vanishing. author:/label: have no such fixed vocabulary
+      // to validate against, so any non-empty value there is still treated
+      // as a filter, matching the app's own documented syntax — wrap in
+      // quotes to search for that text literally instead.
+      if (key === "is") {
+        if ((STATE_QUALIFIERS as string[]).includes(value)) {
+          is.push(value as StateQualifier);
+          continue;
+        }
       } else if (key === "author" && value) {
         author.push(value);
+        continue;
       } else if (key === "label" && value) {
         label.push(value);
+        continue;
       }
-      continue;
     }
     rest.push(token.replace(/^"|"$/g, ""));
   }
@@ -243,13 +256,6 @@ export function searchPullRequests(
   return results.sort((a, b) => b.score - a.score);
 }
 
-export interface PrStats {
-  medianMergeHours: number | null;
-  mergeRatePct: number | null;
-  openCount: number;
-  avgOpenAgeHours: number | null;
-}
-
 function median(values: number[]): number | null {
   if (values.length === 0) return null;
   const sorted = [...values].sort((a, b) => a - b);
@@ -260,27 +266,19 @@ function median(values: number[]): number | null {
 const hoursBetween = (a: string, b: string) =>
   (new Date(b).getTime() - new Date(a).getTime()) / 3_600_000;
 
-// Every input here (created_at/merged_at/closed_at/state) is already on
-// PullRequestSummary — nothing extra to fetch. Recomputes on every call, so
-// it stays live as more pages arrive from the progressive PR load.
-export function computePrStats(pulls: PullRequestSummary[]): PrStats {
-  const mergeDurations = pulls
-    .filter((p) => p.merged && p.merged_at)
-    .map((p) => hoursBetween(p.created_at, p.merged_at as string));
+// Open count and merge rate come from GitHub's search total_count (see
+// fetchPrCounts) — exact across the repo's entire history from one cheap
+// call. Average age and median merge time have no server-side equivalent
+// (total_count answers "how many," not "how long"), so these take the raw
+// samples from fetchOpenAgeSample / fetchRecentMergedSample respectively —
+// see those functions for why each is sampled the way it is.
+export function computeAvgAgeHours(createdAts: string[]): number | null {
+  if (createdAts.length === 0) return null;
+  const now = Date.now();
+  const total = createdAts.reduce((sum, c) => sum + (now - new Date(c).getTime()) / 3_600_000, 0);
+  return total / createdAts.length;
+}
 
-  const closedUnmerged = pulls.filter((p) => p.state === "closed" && !p.merged).length;
-  const mergedCount = mergeDurations.length;
-  const decidedCount = mergedCount + closedUnmerged;
-
-  const openPulls = pulls.filter((p) => p.state === "open");
-  const now = new Date().toISOString();
-  const openAges = openPulls.map((p) => hoursBetween(p.created_at, now));
-
-  return {
-    medianMergeHours: median(mergeDurations),
-    mergeRatePct: decidedCount > 0 ? (mergedCount / decidedCount) * 100 : null,
-    openCount: openPulls.length,
-    avgOpenAgeHours:
-      openAges.length > 0 ? openAges.reduce((a, b) => a + b, 0) / openAges.length : null,
-  };
+export function computeMedianMergeHours(pairs: MergeDurationPair[]): number | null {
+  return median(pairs.map((p) => hoursBetween(p.createdAt, p.mergedAt)));
 }
